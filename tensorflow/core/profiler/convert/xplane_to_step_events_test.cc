@@ -18,11 +18,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "xla/tsl/profiler/utils/group_events.h"
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/profiler/protobuf/xplane.pb.h"
 #include "tensorflow/core/profiler/utils/event_span.h"
-#include "tensorflow/core/profiler/utils/group_events.h"
 #include "tensorflow/core/profiler/utils/xplane_builder.h"
 #include "tensorflow/core/profiler/utils/xplane_schema.h"
 #include "tensorflow/core/profiler/utils/xplane_test_utils.h"
@@ -89,7 +89,7 @@ TEST(ConvertXPlaneToOpStats, CpuOnlyStepDbTest) {
   CreateXEvent(&device_plane_builder, &stream, "matmul", 50, 40,
                {{StatType::kCorrelationId, kFirstCorrelationId}});
 
-  GroupTfEvents(&space);
+  tsl::profiler::GroupTfEvents(&space);
   StepEvents device_step_events =
       ConvertDeviceTraceXPlaneToStepEvents(*device_plane);
   EXPECT_EQ(device_step_events.size(), 1);

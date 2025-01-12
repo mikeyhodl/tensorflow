@@ -20,14 +20,13 @@ limitations under the License.
 #include <string>
 
 #include "tensorflow/core/platform/protobuf.h"
+#include "tensorflow/core/platform/status.h"
 
 namespace tsl {
-class Status;
 class Env;
 }  // namespace tsl
 namespace tensorflow {
 using tsl::Env;
-using tsl::Status;
 
 // Gets a `DescriptorPool` object from the `descriptor_source`. This may be:
 //
@@ -46,7 +45,7 @@ using tsl::Status;
 //
 // Custom schemas can be supported by registering a handler with the
 // `DescriptorPoolRegistry`.
-Status GetDescriptorPool(
+absl::Status GetDescriptorPool(
     Env* env, string const& descriptor_source,
     protobuf::DescriptorPool const** desc_pool,
     std::unique_ptr<protobuf::DescriptorPool>* owned_desc_pool);

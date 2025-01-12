@@ -1,7 +1,8 @@
-load("//tensorflow/lite:build_def.bzl", "tflite_copts", "tflite_copts_warnings", "tflite_self_contained_libs_test_suite")
-load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
-load("//tensorflow/lite:special_rules.bzl", "internal_visibility_allowlist", "tflite_portable_test_suite")
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
+load("//tensorflow/lite:build_def.bzl", "tflite_copts", "tflite_copts_warnings", "tflite_self_contained_libs_test_suite")
+load("//tensorflow/lite:special_rules.bzl", "internal_visibility_allowlist", "tflite_portable_test_suite")
+load("//tensorflow/lite/core:special_rules.bzl", "core_cc_api_stable_visibility_allowlist", "macros_visibility_allowlist")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -38,40 +39,38 @@ cc_library(
         "macros.h",
         "model.h",
         "model_builder.h",
+        "signature_runner.h",
     ],
     compatible_with = get_compatible_with_portable(),
     copts = tflite_copts() + tflite_copts_warnings(),
-    visibility = [
-        "//tensorflow/lite:__subpackages__",
-    ],
+    visibility = ["//tensorflow/lite:__subpackages__"],
     deps = [
         ":cc_api_stable",
+        ":signature_runner",
+        "//tensorflow/compiler/mlir/lite/core:model_builder_base",
+        "//tensorflow/compiler/mlir/lite/experimental/remat:metadata_util",
         "//tensorflow/lite:allocation",
+        "//tensorflow/lite:array",
         "//tensorflow/lite:external_cpu_backend_context",
         "//tensorflow/lite:graph_info",
         "//tensorflow/lite:interpreter_options_header",
-        "//tensorflow/lite:kernel_api",
         "//tensorflow/lite:macros",
         "//tensorflow/lite:memory_planner",
         "//tensorflow/lite:mutable_op_resolver",
-        "//tensorflow/lite:signature_runner",
         "//tensorflow/lite:stderr_reporter",
         "//tensorflow/lite:string",
         "//tensorflow/lite:type_to_tflitetype",
         "//tensorflow/lite:util",
         "//tensorflow/lite/c:common_internal",
         "//tensorflow/lite/core/api",
-        "//tensorflow/lite/core/api:verifier",
         "//tensorflow/lite/core/async:async_signature_runner",
         "//tensorflow/lite/core/c:common",
-        "//tensorflow/lite/experimental/remat:metadata_util",
         "//tensorflow/lite/experimental/resource",
         "//tensorflow/lite/internal:signature_def",
         "//tensorflow/lite/profiling:root_profiler",
-        "//tensorflow/lite/profiling/telemetry",
         "//tensorflow/lite/profiling/telemetry:profiler",
+        "//tensorflow/lite/profiling/telemetry/c:telemetry_setting",
         "//tensorflow/lite/profiling/telemetry/c:telemetry_setting_internal",
-        "//tensorflow/lite/schema:conversion_metadata_fbs",
         "//tensorflow/lite/schema:schema_fbs",
         "@flatbuffers//:runtime_cc",
     ],
@@ -118,41 +117,38 @@ cc_library(
         ":cc_api_experimental",
         ":cc_api_stable",
         ":model_builder",
+        ":signature_runner",
+        "//tensorflow/compiler/mlir/lite/core:model_builder_base",
+        "//tensorflow/compiler/mlir/lite/experimental/remat:metadata_util",
         "//tensorflow/lite:allocation",
+        "//tensorflow/lite:array",
         "//tensorflow/lite:external_cpu_backend_context",
         "//tensorflow/lite:graph_info",
         "//tensorflow/lite:interpreter_options_header",
-        "//tensorflow/lite:kernel_api",
         "//tensorflow/lite:macros",
         "//tensorflow/lite:memory_planner",
         "//tensorflow/lite:mutable_op_resolver",
-        "//tensorflow/lite:optional_debug_tools",
-        "//tensorflow/lite:signature_runner",
         "//tensorflow/lite:stderr_reporter",
         "//tensorflow/lite:string",
         "//tensorflow/lite:type_to_tflitetype",
         "//tensorflow/lite:util",
         "//tensorflow/lite/c:common_internal",
         "//tensorflow/lite/core/api",
-        "//tensorflow/lite/core/api:verifier",
         "//tensorflow/lite/core/async:async_signature_runner",
         "//tensorflow/lite/core/c:common",
-        "//tensorflow/lite/experimental/remat:metadata_util",
         "//tensorflow/lite/experimental/resource",
         "//tensorflow/lite/internal:signature_def",
         "//tensorflow/lite/profiling:root_profiler",
-        "//tensorflow/lite/profiling/telemetry",
         "//tensorflow/lite/profiling/telemetry:profiler",
+        "//tensorflow/lite/profiling/telemetry/c:telemetry_setting",
         "//tensorflow/lite/profiling/telemetry/c:telemetry_setting_internal",
-        "//tensorflow/lite/schema:conversion_metadata_fbs",
         "//tensorflow/lite/schema:schema_fbs",
         "@flatbuffers//:runtime_cc",
     ],
     alwayslink = 1,  # TODO(b/161243354): eliminate this.
 )
 
-# TODO(b/242310498): move interpreter.cc, logger.cc and signature_runner.h from
-# tensorflow/lite/ to here.
+# TODO(b/242310498): move logger.cc from tensorflow/lite/ to here.
 cc_library(
     name = "cc_api_stable",
     srcs = [
@@ -165,15 +161,22 @@ cc_library(
         "interpreter_builder.h",
         "model.h",
         "model_builder.h",
+        "signature_runner.h",
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
         "//tensorflow/lite:__subpackages__",
-    ],
+    ] + core_cc_api_stable_visibility_allowlist(),
     deps = [
         ":model_builder",
+        ":signature_runner",
         ":subgraph",
+        "//tensorflow/compiler/mlir/lite/core:model_builder_base",
+        "//tensorflow/compiler/mlir/lite/experimental/remat:metadata_util",
+        "//tensorflow/compiler/mlir/lite/schema:schema_fbs",
+        "//tensorflow/compiler/mlir/lite/schema:schema_utils",
         "//tensorflow/lite:allocation",
+        "//tensorflow/lite:array",
         "//tensorflow/lite:external_cpu_backend_context",
         "//tensorflow/lite:graph_info",
         "//tensorflow/lite:interpreter_options_header",
@@ -182,7 +185,6 @@ cc_library(
         "//tensorflow/lite:minimal_logging",
         "//tensorflow/lite:mutable_op_resolver",
         "//tensorflow/lite:shared_library",
-        "//tensorflow/lite:signature_runner",
         "//tensorflow/lite:simple_memory_arena",
         "//tensorflow/lite:stderr_reporter",
         "//tensorflow/lite:string",
@@ -199,7 +201,6 @@ cc_library(
         "//tensorflow/lite/delegates:telemetry",
         "//tensorflow/lite/delegates/xnnpack:tflite_with_xnnpack_qs8",
         "//tensorflow/lite/delegates/xnnpack:tflite_with_xnnpack_qu8",
-        "//tensorflow/lite/experimental/remat:metadata_util",
         "//tensorflow/lite/experimental/resource",
         "//tensorflow/lite/internal:signature_def",
         "//tensorflow/lite/kernels/internal:compatibility",
@@ -207,6 +208,7 @@ cc_library(
         "//tensorflow/lite/profiling:root_profiler",
         "//tensorflow/lite/profiling/telemetry",
         "//tensorflow/lite/profiling/telemetry:profiler",
+        "//tensorflow/lite/profiling/telemetry/c:telemetry_setting",
         "//tensorflow/lite/profiling/telemetry/c:telemetry_setting_internal",
         "//tensorflow/lite/schema:conversion_metadata_fbs",
         "//tensorflow/lite/schema:schema_fbs",
@@ -223,11 +225,7 @@ cc_library(
 alias(
     name = "cc_api",
     actual = "cc_api_experimental",
-    visibility = [
-        "//tensorflow/lite/core/shims:__subpackages__",
-        "//tensorflow/lite/delegates/flex:__subpackages__",
-        "//tensorflow/lite/kernels:__subpackages__",
-    ],
+    visibility = ["//tensorflow/lite:__subpackages__"],
 )
 
 # The key parts of the C++ API, including experimental APIs.
@@ -244,6 +242,7 @@ cc_library(
         "interpreter_builder.h",
         "model.h",
         "model_builder.h",
+        "signature_runner.h",
         "subgraph.h",
     ],
     compatible_with = get_compatible_with_portable(),
@@ -253,61 +252,87 @@ cc_library(
     ],
     deps = [
         ":cc_api_stable",
+        ":signature_runner",
+        "//tensorflow/compiler/mlir/lite/core:model_builder_base",
+        "//tensorflow/compiler/mlir/lite/experimental/remat:metadata_util",
         "//tensorflow/lite:allocation",
-        "//tensorflow/lite:builtin_ops",
+        "//tensorflow/lite:array",
         "//tensorflow/lite:external_cpu_backend_context",
         "//tensorflow/lite:graph_info",
         "//tensorflow/lite:interpreter_options_header",
         "//tensorflow/lite:macros",
         "//tensorflow/lite:memory_planner",
-        "//tensorflow/lite:minimal_logging",
         "//tensorflow/lite:mutable_op_resolver",
-        "//tensorflow/lite:signature_runner",
         "//tensorflow/lite:stderr_reporter",
         "//tensorflow/lite:string",
         "//tensorflow/lite:type_to_tflitetype",
         "//tensorflow/lite:util",
         "//tensorflow/lite/c:common_internal",
         "//tensorflow/lite/core/api",
-        "//tensorflow/lite/core/api:verifier",
         "//tensorflow/lite/core/async:async_signature_runner",
         "//tensorflow/lite/core/c:c_api_types",
         "//tensorflow/lite/core/c:common",
-        "//tensorflow/lite/experimental/remat:metadata_util",
         "//tensorflow/lite/experimental/resource",
         "//tensorflow/lite/internal:signature_def",
         "//tensorflow/lite/profiling:root_profiler",
-        "//tensorflow/lite/profiling/telemetry",
         "//tensorflow/lite/profiling/telemetry:profiler",
+        "//tensorflow/lite/profiling/telemetry/c:telemetry_setting",
         "//tensorflow/lite/profiling/telemetry/c:telemetry_setting_internal",
-        "//tensorflow/lite/schema:conversion_metadata_fbs",
         "//tensorflow/lite/schema:schema_fbs",
         "@flatbuffers//:runtime_cc",
-        "@ruy//ruy:denormal",
     ],
     alwayslink = 1,  # TODO(b/161243354): eliminate this.
 )
 
 cc_library(
     name = "model_builder",
-    srcs = ["model_builder.cc"],
     hdrs = ["model_builder.h"],
     compatible_with = get_compatible_with_portable(),
     copts = tflite_copts_warnings(),
     visibility = internal_visibility_allowlist(),
     deps = [
-        "//tensorflow/lite:allocation",
-        "//tensorflow/lite:mutable_op_resolver",
+        "//tensorflow/compiler/mlir/lite/core:model_builder_base",
         "//tensorflow/lite:stderr_reporter",
-        "//tensorflow/lite:string",
         "//tensorflow/lite/core/api:error_reporter",
-        "//tensorflow/lite/core/api:op_resolver",
-        "//tensorflow/lite/core/api:verifier",
-        "//tensorflow/lite/core/c:common",
-        "//tensorflow/lite/schema:schema_fbs",
-        "@flatbuffers",
     ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "signature_runner",
+    srcs = ["signature_runner.cc"],
+    hdrs = ["signature_runner.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = [
+        "//tensorflow/lite:__pkg__",
+        "//tensorflow/lite/core:__subpackages__",
+    ],
+    deps = [
+        "//tensorflow/lite/c:common",
+        "//tensorflow/lite/core:subgraph",
+        "//tensorflow/lite/core/c:c_api_types",
+        "//tensorflow/lite/core/c:common",
+        "//tensorflow/lite/internal:signature_def",
+    ],
+)
+
+# Test signature runner.
+cc_test(
+    name = "signature_runner_test",
+    size = "small",
+    srcs = ["signature_runner_test.cc"],
+    data = [
+        "//tensorflow/lite:testdata/multi_signatures.bin",
+    ],
+    deps = [
+        ":framework",
+        ":signature_runner",
+        "//tensorflow/compiler/mlir/lite/core:model_builder_base",
+        "//tensorflow/lite:model_builder",
+        "//tensorflow/lite/core/kernels:builtin_ops",
+        "//tensorflow/lite/testing:util",
+        "@com_google_googletest//:gtest_main",
+    ],
 )
 
 # Test model framework.
@@ -333,15 +358,14 @@ cc_test(
     ],
     tags = [
         "no_windows",  # TODO(b/194459105): the test is flaky.
+        "noasan",
         "tflite_not_portable",
         "tflite_smoke_test",
     ],
     deps = [
         ":framework",
-        "//tensorflow/core/platform:resource_loader",
+        "//tensorflow/compiler/mlir/lite:allocation",
         "//tensorflow/lite:framework",
-        "//tensorflow/lite:interpreter_test_util",
-        "//tensorflow/lite:string",
         "//tensorflow/lite:string_util",
         "//tensorflow/lite/core/api",
         "//tensorflow/lite/core/api:verifier",
@@ -413,8 +437,8 @@ cc_library(
     hdrs = ["macros.h"],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//visibility:private",
-    ],
+        "//tensorflow/lite:__subpackages__",
+    ] + macros_visibility_allowlist(),
 )
 
 cc_library(
@@ -434,7 +458,9 @@ cc_library(
         "//tensorflow/lite/kernels:__subpackages__",
     ],
     deps = [
+        "//tensorflow/compiler/mlir/lite/experimental/remat:metadata_util",
         "//tensorflow/lite:allocation",
+        "//tensorflow/lite:array",
         "//tensorflow/lite:graph_info",
         "//tensorflow/lite:interpreter_options_header",
         "//tensorflow/lite:kernel_api",
@@ -446,7 +472,6 @@ cc_library(
         "//tensorflow/lite/core/api",
         "//tensorflow/lite/core/c:c_api_types",
         "//tensorflow/lite/core/c:common",
-        "//tensorflow/lite/experimental/remat:metadata_util",
         "//tensorflow/lite/experimental/resource",
         "//tensorflow/lite/profiling:root_profiler",
         "//tensorflow/lite/profiling/telemetry",
@@ -477,8 +502,39 @@ cc_test(
     deps = [
         ":framework_stable",
         "//tensorflow/lite:framework",
+        "//tensorflow/lite:util",
+        "//tensorflow/lite/c:c_api_types",
         "//tensorflow/lite/kernels:builtin_ops",  # build_cleaner: keep
-        "//tensorflow/lite/testing:util",  # build_cleaner: keep
+        "@com_google_absl//absl/log:check",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "model_building",
+    srcs = ["model_building.cc"],
+    hdrs = ["model_building.h"],
+    deps = [
+        ":subgraph",
+        "//tensorflow/lite:framework",
+        "//tensorflow/lite/c:c_api_types",
+        "//tensorflow/lite/c:common",
+        "//tensorflow/lite/core/c:common",
+        "//tensorflow/lite/kernels:builtin_ops",
+        "//tensorflow/lite/schema:schema_fbs",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+cc_test(
+    name = "model_building_test",
+    srcs = ["model_building_test.cc"],
+    deps = [
+        ":model_building",
+        "//tensorflow/lite:framework",
+        "//tensorflow/lite/c:c_api_types",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],
 )

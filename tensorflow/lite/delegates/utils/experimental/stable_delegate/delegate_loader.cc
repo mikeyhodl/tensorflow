@@ -21,6 +21,8 @@ limitations under the License.
 #include <cerrno>
 #include <string>
 
+#include "absl/strings/numbers.h"
+#include "tensorflow/lite/acceleration/configuration/c/stable_delegate.h"
 #include "tensorflow/lite/experimental/acceleration/compatibility/android_info.h"
 #include "tensorflow/lite/tools/logging.h"
 
@@ -103,7 +105,6 @@ void* LoadSymbolFromSharedLibrary(const std::string& delegate_path,
     dlclose(delegate_lib_handle);
     return nullptr;
   }
-  TFLITE_LOG(INFO) << "Found symbol: " << delegate_symbol;
   return symbol_pointer;
 }
 

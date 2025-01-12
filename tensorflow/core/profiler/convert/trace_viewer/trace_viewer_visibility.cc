@@ -16,13 +16,15 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "tensorflow/core/profiler/utils/timespan.h"
+#include "absl/log/check.h"
+#include "xla/tsl/profiler/utils/timespan.h"
+#include "tensorflow/core/profiler/protobuf/trace_events.pb.h"
 
 namespace tensorflow {
 namespace profiler {
 
-TraceViewerVisibility::TraceViewerVisibility(Timespan visible_span,
-                                             uint64_t resolution_ps)
+TraceViewerVisibility::TraceViewerVisibility(
+    tsl::profiler::Timespan visible_span, uint64_t resolution_ps)
     : visible_span_(visible_span), resolution_ps_(resolution_ps) {}
 
 bool TraceViewerVisibility::Visible(const TraceEvent& event) {
@@ -30,7 +32,7 @@ bool TraceViewerVisibility::Visible(const TraceEvent& event) {
   if (visible_span_.Instant()) return true;
 
   // Events outside visible_span are not visible.
-  Timespan span(event.timestamp_ps(), event.duration_ps());
+  tsl::profiler::Timespan span(event.timestamp_ps(), event.duration_ps());
   if (!visible_span_.Overlaps(span)) return false;
 
   // If resolution is zero, no downsampling.
@@ -72,7 +74,7 @@ bool TraceViewerVisibility::VisibleAtResolution(const TraceEvent& event) {
   }
 
   // An event is visible if its duration is large enough.
-  Timespan span(event.timestamp_ps(), event.duration_ps());
+  tsl::profiler::Timespan span(event.timestamp_ps(), event.duration_ps());
   bool visible = (span.duration_ps() >= resolution_ps_);
 
   auto& row = rows_[RowId(event.device_id(), event.resource_id())];
@@ -128,7 +130,7 @@ void TraceViewerVisibility::SetVisibleAtResolution(const TraceEvent& event) {
                                                 event.timestamp_ps());
 
   } else {
-    Timespan span(event.timestamp_ps(), event.duration_ps());
+    tsl::profiler::Timespan span(event.timestamp_ps(), event.duration_ps());
     auto& row = rows_[RowId(event.device_id(), event.resource_id())];
     if (event.has_flow_id()) {
       if (event.flow_entry_type() == TraceEvent::FLOW_END) {

@@ -15,7 +15,7 @@
 """FuncGraph and related functionality."""
 
 import traceback
-from typing import Any, Callable, Hashable
+from typing import Any, Callable, ContextManager, Hashable
 import weakref
 
 from tensorflow.core.function import trace_type
@@ -30,7 +30,7 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import indexed_slices
 from tensorflow.python.framework import ops
-from tensorflow.python.framework import tensor_spec
+from tensorflow.python.framework import tensor as tensor_lib
 from tensorflow.python.framework import type_spec
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import resource_variable_ops
@@ -80,7 +80,7 @@ def convert_structure_to_signature(structure, arg_names=None,
 
   def encode_arg(arg, path):
     """A representation for this argument, for converting into signatures."""
-    if isinstance(arg, ops.Tensor):
+    if isinstance(arg, tensor_lib.Tensor):
       user_specified_name = None
       try:
         user_specified_name = compat.as_str(
@@ -93,8 +93,8 @@ def convert_structure_to_signature(structure, arg_names=None,
         # of the function argument.
         name = user_specified_name
       else:
-        name = tensor_spec.sanitize_spec_name("_".join(str(p) for p in path))
-      return tensor_spec.TensorSpec(arg.shape, arg.dtype, name)
+        name = tensor_lib.sanitize_spec_name("_".join(str(p) for p in path))
+      return tensor_lib.TensorSpec(arg.shape, arg.dtype, name)
     if isinstance(arg, resource_variable_ops.ResourceVariable):
       return trace_type.from_value(arg, signature_context)
     if isinstance(arg, composite_tensor.CompositeTensor):
@@ -107,7 +107,7 @@ def convert_structure_to_signature(structure, arg_names=None,
         str,
         type(None),
         dtypes.DType,
-        tensor_spec.TensorSpec,
+        tensor_lib.TensorSpec,
         type_spec.TypeSpec,
     )):
       return arg
@@ -387,8 +387,8 @@ class FuncGraph(ops.Graph):
         else:
           ret_nest = closure()
 
-        ret_nest = spec._cast(ret_nest, trace_type.InternalCastContext)  # pylint: disable=protected-access
-        return spec._to_tensors(ret_nest)  # pylint: disable=protected-access
+        ret_nest = spec.cast(ret_nest, trace_type.InternalCastContext)
+        return spec.to_tensors(ret_nest)
 
       wrapped_closure.output_spec = spec
       self._function_captures.add_or_replace(
@@ -442,63 +442,7 @@ class FuncGraph(ops.Graph):
   def as_default(self):
     outer_cm = super().as_default()
 
-    @tf_contextlib.contextmanager
-    def inner_cm():
-      """Context manager for copying distribute.Strategy scope information."""
-      # pylint: disable=protected-access
-      # TODO(b/112906995, nareshmodi): distribution strategy depends on
-      # inheriting this stack from the default graph even in eager mode. Maybe
-      # it should be part of the eager context? This would also allow us to
-      # remove a get_default_graph() call from the function cache lookup.
-      graph = ops.get_default_graph()
-      old_strategy_stack = self._distribution_strategy_stack
-      self._distribution_strategy_stack = list(
-          graph._distribution_strategy_stack)
-
-      # We ignore device placements from any outer scopes while tracing the
-      # function when possible, to avoid hard-coding them in the function
-      # graph. "Default" placements come from the PartitionedCallOp's placement,
-      # so that the same trace of the Python function may be placed on several
-      # different devices and saved functions may be placed on new devices when
-      # restored.
-      # However, we need to preserve the outer device stack in the following
-      # cases in non eager context:
-      # 1. device stack is callable
-      # 2. When using distribution strategy with legacy graph mode.
-      old_device_stack = self._device_function_stack
-      if (not context.executing_eagerly() and
-          (device_stack_has_callable(graph._device_function_stack) or
-           (self._distribution_strategy_stack and
-            not ops.executing_eagerly_outside_functions()))):
-        # Hard-code devices from device functions in the function body
-        self._device_function_stack = graph._device_function_stack.copy()
-
-      old_creator_stack = self._variable_creator_stack
-      self._variable_creator_stack = graph._variable_creator_stack
-      # Inherit the graph key, since this is used for matching variables in
-      # optimizers.
-      old_graph_key = self._graph_key
-      self._graph_key = graph._graph_key
-      # pylint: enable=protected-access
-
-      old_scope_exit_callbacks = self._scope_exit_callbacks
-      self._scope_exit_callbacks = []
-
-      with outer_cm as g:
-        try:
-          yield g
-        finally:
-          try:
-            for fn in self._scope_exit_callbacks:
-              fn()
-          finally:
-            self._scope_exit_callbacks = old_scope_exit_callbacks
-            self._distribution_strategy_stack = old_strategy_stack
-            self._device_function_stack = old_device_stack
-            self._variable_creator_stack = old_creator_stack
-            self._graph_key = old_graph_key
-
-    return inner_cm()
+    return _func_graph_as_default_inner_cm(self, outer_cm)
 
   @property
   def outer_graph(self):
@@ -917,14 +861,69 @@ class FuncGraph(ops.Graph):
     self._scope_exit_callbacks.append(fn)
 
 
+@tf_contextlib.contextmanager
+def _func_graph_as_default_inner_cm(
+    func_graph: FuncGraph, outer_cm: ContextManager[ops.Graph]):
+  """Context manager for copying distribute.Strategy scope information."""
+  # pylint: disable=protected-access
+  # TODO(b/112906995, nareshmodi): distribution strategy depends on
+  # inheriting this stack from the default graph even in eager mode. Maybe
+  # it should be part of the eager context? This would also allow us to
+  # remove a get_default_graph() call from the function cache lookup.
+  graph = ops.get_default_graph()
+  old_strategy_stack = func_graph._distribution_strategy_stack
+  func_graph._distribution_strategy_stack = list(
+      graph._distribution_strategy_stack)
+
+  # We ignore device placements from any outer scopes while tracing the
+  # function when possible, to avoid hard-coding them in the function
+  # graph. "Default" placements come from the PartitionedCallOp's placement,
+  # so that the same trace of the Python function may be placed on several
+  # different devices and saved functions may be placed on new devices when
+  # restored.
+  # However, we need to preserve the outer device stack in the following
+  # cases in non eager context:
+  # 1. device stack is callable
+  # 2. When using distribution strategy with legacy graph mode.
+  old_device_stack = func_graph._device_function_stack
+  if (not context.executing_eagerly() and
+      (device_stack_has_callable(graph._device_function_stack) or
+       (func_graph._distribution_strategy_stack and
+        not ops.executing_eagerly_outside_functions()))):
+    # Hard-code devices from device functions in the function body
+    func_graph._device_function_stack = graph._device_function_stack.copy()
+
+  old_creator_stack = func_graph._variable_creator_stack
+  func_graph._variable_creator_stack = graph._variable_creator_stack
+  # Inherit the graph key, since this is used for matching variables in
+  # optimizers.
+  old_graph_key = func_graph._graph_key
+  func_graph._graph_key = graph._graph_key
+
+  old_scope_exit_callbacks = func_graph._scope_exit_callbacks
+  func_graph._scope_exit_callbacks = []
+
+  with outer_cm as g:
+    try:
+      yield g
+    finally:
+      try:
+        for fn in func_graph._scope_exit_callbacks:
+          fn()
+      finally:
+        func_graph._scope_exit_callbacks = old_scope_exit_callbacks
+        func_graph._distribution_strategy_stack = old_strategy_stack
+        func_graph._device_function_stack = old_device_stack
+        func_graph._variable_creator_stack = old_creator_stack
+        func_graph._graph_key = old_graph_key
+
+
 def func_graph_from_py_func(name,
                             python_func,
                             args,
                             kwargs,
                             signature=None,
                             func_graph=None,
-                            autograph=False,
-                            autograph_options=None,
                             add_control_dependencies=True,
                             arg_names=None,
                             op_return_value=None,
@@ -947,10 +946,6 @@ def func_graph_from_py_func(name,
       inputs.
     func_graph: Optional. An instance of FuncGraph. If provided, we will use
       this graph else a new one is built and returned.
-    autograph: whether to use autograph to compile `python_func`.
-      See https://www.tensorflow.org/guide/autograph for more information.
-    autograph_options: additional knobs to control when `autograph=True`.
-      See https://www.tensorflow.org/guide/autograph for more information.
     add_control_dependencies: If True, automatically adds control dependencies
       to ensure program order matches execution order and stateful ops always
       execute.
@@ -980,7 +975,7 @@ def func_graph_from_py_func(name,
       `Tensor` or a `tf.experimental.ExtensionType`.
   """
   if op_return_value is not None:
-    assert isinstance(op_return_value, ops.Tensor), op_return_value
+    assert isinstance(op_return_value, tensor_lib.Tensor), op_return_value
   if func_graph is None:
     func_graph = FuncGraph(
         name, collections=collections, capture_by_value=capture_by_value)
@@ -1005,7 +1000,11 @@ def func_graph_from_py_func(name,
       func_args, func_kwargs = args, kwargs
 
     input_trace_types = trace_type.from_value([func_args, func_kwargs])
-    func_graph.inputs = input_trace_types._to_tensors([func_args, func_kwargs])  # pylint: disable=protected-access
+    func_graph.inputs = input_trace_types.to_tensors([func_args, func_kwargs])  # pylint: disable=protected-access
+
+    # Reset variables watched while deconstructing inputs.
+    func_graph._watched_variables = object_identity.ObjectIdentityWeakSet()  # pylint: disable=protected-access
+
     for arg in func_graph.inputs:
       if arg.dtype == dtypes.resource:
         func_graph._resource_tensor_inputs.add(arg)  # pylint:disable=protected-access
@@ -1057,62 +1056,28 @@ def func_graph_from_py_func(name,
         x = deps_ctx.mark_as_return(x)
       return x
 
-    try:
-      if autograph:
-        from tensorflow.python import autograph  # pylint: disable=g-import-not-at-top
-        _, original_func = tf_decorator.unwrap(python_func)
+    _, original_func = tf_decorator.unwrap(python_func)
+    func_outputs = python_func(*func_args, **func_kwargs)
 
-        def autograph_handler(*args, **kwargs):
-          """Calls a converted version of original_func."""
-          # TODO(mdan): Push this block higher in tf.function's call stack.
-          try:
-            return autograph.converted_call(
-                original_func,
-                args,
-                kwargs,
-                options=autograph.ConversionOptions(
-                    recursive=True,
-                    optional_features=autograph_options,
-                    user_requested=True,
-                ))
-          except Exception as e:  # pylint:disable=broad-except
-            if hasattr(e, "ag_error_metadata"):
-              raise e.ag_error_metadata.to_exception(e)
-            else:
-              raise
+    # invariant: `func_outputs` contains only Tensors, CompositeTensors,
+    # TensorArrays and `None`s.
+    func_outputs = variable_utils.convert_variables_to_tensors(func_outputs)
+    func_outputs = nest.map_structure(
+        convert, func_outputs, expand_composites=True)
 
-        # Wrapping around a decorator allows checks like tf_inspect.getargspec
-        # to be accurate.
-        converted_func = tf_decorator.make_decorator(original_func,
-                                                     autograph_handler)
-        python_func = tf_decorator.rewrap(python_func, original_func,
-                                          converted_func)
-
-      else:
-        _, original_func = tf_decorator.unwrap(python_func)
-
-      func_outputs = python_func(*func_args, **func_kwargs)
-
-      # invariant: `func_outputs` contains only Tensors, CompositeTensors,
-      # TensorArrays and `None`s.
-      func_outputs = variable_utils.convert_variables_to_tensors(func_outputs)
-      func_outputs = nest.map_structure(
-          convert, func_outputs, expand_composites=True)
-
-      # flatten and unflatten func_args and func_kwargs to maintain parity
-      # from flattening which sorts by key
-      func_args = nest.pack_sequence_as(
-          func_args,
-          nest.flatten(func_args, expand_composites=True),
-          expand_composites=True)
-      func_kwargs = nest.pack_sequence_as(
-          func_kwargs,
-          nest.flatten(func_kwargs, expand_composites=True),
-          expand_composites=True)
-      check_func_mutation(func_args_before, func_kwargs_before, func_args,
-                          func_kwargs, original_func)
-    finally:
-      current_scope.set_use_resource(default_use_resource)
+    # flatten and unflatten func_args and func_kwargs to maintain parity
+    # from flattening which sorts by key
+    func_args = nest.pack_sequence_as(
+        func_args,
+        nest.flatten(func_args, expand_composites=True),
+        expand_composites=True)
+    func_kwargs = nest.pack_sequence_as(
+        func_kwargs,
+        nest.flatten(func_kwargs, expand_composites=True),
+        expand_composites=True)
+    check_func_mutation(func_args_before, func_kwargs_before, func_args,
+                        func_kwargs, original_func)
+    current_scope.set_use_resource(default_use_resource)
 
     inputs = []
     for arg in composite_tensor_utils.flatten_with_variables([func_args,
@@ -1127,7 +1092,7 @@ def func_graph_from_py_func(name,
         if resource_placeholder is None:
           continue
         inputs.append(resource_placeholder)
-      elif isinstance(arg, ops.Tensor):
+      elif isinstance(arg, tensor_lib.Tensor):
         inputs.append(arg)
     func_graph.inputs = (
         inputs + func_graph.internal_captures + nest.flatten(
@@ -1147,24 +1112,6 @@ def func_graph_from_py_func(name,
         deps_control_manager.collective_manager_ids_used)
 
   return func_graph
-
-
-def maybe_captured(tensor):
-  """If t is a captured value placeholder, returns the original captured value.
-
-  Args:
-    tensor: Tensor.
-
-  Returns:
-    A tensor, potentially from a different Graph/FuncGraph.
-  """
-  if (not isinstance(tensor, ops.EagerTensor) and
-      tensor.op.graph.building_function and tensor.op.type == "Placeholder"):
-    for input_t, placeholder_t in tensor.op.graph.captures:
-      if tensor == placeholder_t:
-        return maybe_captured(input_t)
-  # pylint: enable=protected-access
-  return tensor
 
 
 def device_stack_has_callable(device_stack):
@@ -1271,10 +1218,9 @@ def _create_placeholders(args, kwargs, arg_names=None):
   arg_trace_types = trace_type.from_value(tuple(args), signature_context)
   kwarg_trace_types = trace_type.from_value(kwargs, signature_context)
 
-  handledata_mapping = signature_context.get_handledata_mapping()
   placeholder_mapping = signature_context.get_placeholder_mapping()
   placeholder_context = trace_type.InternalPlaceholderContext(
-      ops.get_default_graph(), handledata_mapping, placeholder_mapping)
+      ops.get_default_graph(), placeholder_mapping)
 
   if arg_names is None:
     arg_names = [None] * len(arg_trace_types.components)

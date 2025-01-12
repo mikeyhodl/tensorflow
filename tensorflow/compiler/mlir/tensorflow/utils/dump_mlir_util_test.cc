@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tensorflow/compiler/mlir/tensorflow/utils/dump_mlir_util.h"
 
+#include <string>
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "llvm/Support/MemoryBuffer.h"
@@ -61,7 +63,7 @@ TEST(DumpMlirModuleTest, LogInfo) {
   setenv("TF_DUMP_GRAPH_PREFIX", "-", 1);
 
   std::string filepath = DumpMlirOpToFile("module", module_ref.get());
-  EXPECT_EQ(filepath, "(stderr)");
+  EXPECT_EQ(filepath, "(stderr; requested filename: 'module')");
 }
 
 TEST(DumpMlirModuleTest, Valid) {
@@ -123,7 +125,7 @@ TEST(DumpCrashReproducerTest, RoundtripDumpAndReadValid) {
   EXPECT_TRUE(mlir::MlirOptMain(output_stream->os(), std::move(input_file),
                                 registry,
                                 mlir::MlirOptMainConfig{}
-                                    .splitInputFile(false)
+                                    .splitInputFile("")
                                     .verifyDiagnostics(false)
                                     .verifyPasses(false)
                                     .allowUnregisteredDialects(false)

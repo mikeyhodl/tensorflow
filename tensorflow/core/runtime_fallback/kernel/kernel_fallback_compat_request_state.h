@@ -112,6 +112,9 @@ class KernelFallbackCompatRequestState {
   }
 
   tensorflow::Device* cpu_device() const { return cpu_device_; }
+  tensorflow::FunctionLibraryRuntime* cpu_function_library_runtime() const {
+    return cpu_function_library_runtime_;
+  }
 
   ScopedStepContainer* step_container() const { return step_container_.get(); }
 
@@ -135,7 +138,10 @@ class KernelFallbackCompatRequestState {
   std::function<void(std::function<void()>)>* runner() const { return runner_; }
 
   CancellationManager* cancellation_manager() const {
-    return default_cancellation_manager_;
+    return cancellation_manager_;
+  }
+  void set_cancellation_manager(CancellationManager* cancellation_manager) {
+    cancellation_manager_ = cancellation_manager;
   }
 
   RendezvousInterface* rendezvous() const { return rendezvous_.get(); }
@@ -166,13 +172,13 @@ class KernelFallbackCompatRequestState {
     client_graph_resource_context_ = client_graph_resource_context;
   }
 
-  void set_model_config(
-      const tensorflow::tfrt_stub::ModelConfig* model_config) {
-    model_config_ = model_config;
+  void set_runtime_config(
+      const tensorflow::tfrt_stub::RuntimeConfig* runtime_config) {
+    runtime_config_ = runtime_config;
   }
 
-  const tensorflow::tfrt_stub::ModelConfig* model_config() const {
-    return model_config_;
+  const tensorflow::tfrt_stub::RuntimeConfig* runtime_config() const {
+    return runtime_config_;
   }
 
  private:
@@ -185,10 +191,11 @@ class KernelFallbackCompatRequestState {
       custom_device_;
   std::unique_ptr<tensorflow::Device> custom_cpu_device_;
   tensorflow::Device* cpu_device_ = nullptr;
+  tensorflow::FunctionLibraryRuntime* cpu_function_library_runtime_ = nullptr;
   std::unique_ptr<CollectiveExecutor::Handle> collective_executor_handle_;
   CollectiveExecutor* collective_executor_ = nullptr;
   core::RefCountPtr<Rendezvous> rendezvous_;
-  CancellationManager* default_cancellation_manager_ = nullptr;
+  CancellationManager* cancellation_manager_ = nullptr;
 
   const tensorflow::DeviceMgr* device_manager_ = nullptr;
 
@@ -215,24 +222,26 @@ class KernelFallbackCompatRequestState {
 
   tfrt::ResourceContext* client_graph_resource_context_ = nullptr;
 
-  const tensorflow::tfrt_stub::ModelConfig* model_config_ = nullptr;
+  const tensorflow::tfrt_stub::RuntimeConfig* runtime_config_ = nullptr;
 };
 
 // Set up fallback context with common tensorflow states such as devices,
 // function library runtime. They will be forwarded to tensorflow::OpKernel as
 // in tensorflow::Executor. If `runner` is nullptr, internally it will use a
 // default runner that executes tasks in the caller thread.
-Status SetUpKernelFallbackCompatRequestContext(
+absl::Status SetUpKernelFallbackCompatRequestContext(
     tfrt::RequestContextBuilder* builder,
     const tensorflow::DeviceMgr* device_manager,
     const tensorflow::ProcessFunctionLibraryRuntime* pflr,
     tfrt_stub::OpKernelRunnerTable* runner_table,
     FallbackResourceArray* resource_array,
-    tensorflow::thread::ThreadPoolInterface* user_intra_op_threadpool = nullptr,
-    const std::optional<SessionMetadata>& model_metadata = std::nullopt,
-    std::function<void(std::function<void()>)>* runner = nullptr,
-    tfrt_stub::CostRecorder* cost_recorder = nullptr,
-    tfrt::ResourceContext* client_graph_resource_context = nullptr);
+    tensorflow::thread::ThreadPoolInterface* user_intra_op_threadpool,
+    const std::optional<SessionMetadata>& model_metadata,
+    std::function<void(std::function<void()>)>* runner,
+    tfrt_stub::CostRecorder* cost_recorder,
+    tfrt::ResourceContext* client_graph_resource_context,
+    tensorflow::CancellationManager* cancellation_manager,
+    const tensorflow::tfrt_stub::RuntimeConfig* runtime_config);
 
 }  // namespace tfd
 }  // namespace tensorflow

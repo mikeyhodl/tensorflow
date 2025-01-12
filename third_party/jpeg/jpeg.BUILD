@@ -1,8 +1,8 @@
 # Description:
 #   libjpeg-turbo is a drop in replacement for jpeglib optimized with SIMD.
 
-load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 
 licenses(["notice"])  # custom notice-style license, see LICENSE.md
 
@@ -142,6 +142,7 @@ cc_library(
     srcs = [
         "jchuff.h",
         "jconfig.h",
+        "jconfigint.h",
         "jdct.h",
         "jerror.h",
         "jinclude.h",

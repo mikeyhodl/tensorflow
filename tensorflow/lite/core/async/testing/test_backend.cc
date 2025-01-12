@@ -18,12 +18,12 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "tensorflow/lite/array.h"
 #include "tensorflow/lite/builtin_ops.h"
-#include "tensorflow/lite/core/async/async_kernel_internal.h"
+#include "tensorflow/lite/core/async/c/types.h"
 #include "tensorflow/lite/core/c/c_api_types.h"
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/delegates/utils.h"
-#include "tensorflow/lite/util.h"
 
 namespace tflite {
 namespace async {
@@ -75,8 +75,7 @@ TfLiteStatus DelegatePrepare(TfLiteContext* context,
   };
 
   return context->ReplaceNodeSubsetsWithDelegateKernels(
-      context, reg, BuildTfLiteIntArray(supported_nodes).get(),
-      tflite_delegate);
+      context, reg, BuildTfLiteArray(supported_nodes).get(), tflite_delegate);
 }
 
 }  // namespace

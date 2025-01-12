@@ -15,7 +15,7 @@ limitations under the License.
 
 // See docs in ../ops/mkl_nn_ops.cc.
 
-#if defined(INTEL_MKL) && !defined(ENABLE_ONEDNN_V3)
+#ifdef INTEL_MKL
 
 #include "tensorflow/core/kernels/mkl/mkl_eltwise_activation_base_op.h"
 
@@ -54,7 +54,7 @@ class MklFusedMishOp
     // mish(x) = x * tanh(y)
     T feature = (static_cast<T*>(src_buf))[0];
     T s1 = Eigen::numext::exp(feature);
-    T s2 = Eigen::numext::log(s1 + 1);
+    T s2 = Eigen::numext::log(s1 + T(1));
     T e1 = Eigen::numext::exp(s2);
     T e2 = Eigen::numext::exp(-s2);
     (static_cast<T*>(dst_buf))[0] = feature * ((e1 - e2) / (e1 + e2));
@@ -69,7 +69,8 @@ class MklFusedMishOp
       MklFusedMishOp<CPUDevice, type>);
 TF_CALL_float(REGISTER_MISH_MKL_SUPPORTED_KERNELS_TYPES);
 TF_CALL_bfloat16(REGISTER_MISH_MKL_SUPPORTED_KERNELS_TYPES);
+TF_CALL_half(REGISTER_MISH_MKL_SUPPORTED_KERNELS_TYPES);
 
 }  // namespace tensorflow
 
-#endif  // INTEL_MKL && !ENABLE_ONEDNN_V3
+#endif  // INTEL_MKL

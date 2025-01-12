@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/core/profiler/convert/trace_viewer/trace_events_to_json.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -21,6 +22,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/match.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "tensorflow/core/profiler/protobuf/trace_events.pb.h"
 #include "tensorflow/core/profiler/protobuf/trace_events_raw.pb.h"
@@ -55,7 +57,8 @@ std::string JsonEscape(absl::string_view raw) {
           escaped_string.push_back('t');
           break;
         default:
-          absl::StrAppendFormat(&escaped_string, "u%04x", static_cast<uint>(c));
+          absl::StrAppendFormat(&escaped_string, "u%04x",
+                                static_cast<unsigned int>(c));
       }
       continue;
     }
@@ -71,7 +74,8 @@ std::string JsonEscape(absl::string_view raw) {
       case '<':
       case '>':
       case '&': {
-        absl::StrAppendFormat(&escaped_string, "\\u%04x", static_cast<uint>(c));
+        absl::StrAppendFormat(&escaped_string, "\\u%04x",
+                              static_cast<unsigned int>(c));
         continue;
       }
       case '\xe2': {

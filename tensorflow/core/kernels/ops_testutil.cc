@@ -19,6 +19,7 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/gpu/gpu_managed_allocator.h"
 #endif
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -80,8 +81,8 @@ OpsTestBase::OpsTestBase() : device_type_(DEVICE_CPU) {
 
   allocator_ = device_->GetAllocator(AllocatorAttributes());
 
-  flib_def_ = std::make_unique<FunctionLibraryDefinition>(
-      OpRegistry::Global(), FunctionDefLibrary{});
+  flib_def_ = std::make_unique<FunctionLibraryDefinition>(OpRegistry::Global(),
+                                                          FunctionDefLibrary());
   pflr_ = std::make_unique<ProcessFunctionLibraryRuntime>(
       device_mgr_.get(), Env::Default(), /*config=*/nullptr,
       TF_GRAPH_DEF_VERSION, flib_def_.get(), OptimizerOptions());
@@ -134,11 +135,11 @@ void OpsTestBase::set_node_def(const NodeDef& node_def) {
 
 NodeDef* OpsTestBase::node_def() { return &node_def_; }
 
-Status OpsTestBase::InitOp() {
+absl::Status OpsTestBase::InitOp() {
   return InitOpWithGraphVersion(TF_GRAPH_DEF_VERSION);
 }
 
-Status OpsTestBase::InitOpWithGraphVersion(int graph_def_version) {
+absl::Status OpsTestBase::InitOpWithGraphVersion(int graph_def_version) {
   std::shared_ptr<const NodeProperties> props;
   TF_RETURN_IF_ERROR(NodeProperties::CreateFromNodeDef(
       node_def_, OpRegistry::Global(), &props));
@@ -148,7 +149,14 @@ Status OpsTestBase::InitOpWithGraphVersion(int graph_def_version) {
       device_->resource_manager(), props, graph_def_version, &kernel));
   kernel_.reset(kernel);
   input_types_ = kernel_->input_types();
-  return OkStatus();
+  return absl::OkStatus();
+}
+
+static std::function<void(std::function<void()>)>* GetDefaultRunner() {
+  static auto* const default_runner =
+      new std::function<void(std::function<void()>)>(
+          [](const std::function<void()>& f) { f(); });
+  return default_runner;
 }
 
 void OpsTestBase::CreateContext() {
@@ -175,11 +183,13 @@ void OpsTestBase::CreateContext() {
   params_->cancellation_manager = &default_cancellation_manager_;
   params_->resource_manager = device_->resource_manager();
   params_->function_library = pflr_->GetFLR(device_->name());
+  params_->runner = GetDefaultRunner();
+  params_->session_metadata = &session_metadata();
 
   context_.reset(new OpKernelContext(params_.get()));
 }
 
-Status OpsTestBase::RunOpKernel() {
+absl::Status OpsTestBase::RunOpKernel() {
   CreateContext();
   device_->Compute(kernel_.get(), context_.get());
   return context_->status();

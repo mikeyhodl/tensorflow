@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <memory>
+#include <vector>
+
 #include "tensorflow/core/common_runtime/eager/context.h"
 #include "tensorflow/core/framework/function_testlib.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
@@ -57,7 +60,7 @@ static Device* CreateDevice(const char* type, const char* name) {
   class FakeDevice : public Device {
    public:
     explicit FakeDevice(const DeviceAttributes& attr) : Device(nullptr, attr) {}
-    Status Sync() override { return OkStatus(); }
+    absl::Status Sync() override { return absl::OkStatus(); }
     Allocator* GetAllocator(AllocatorAttributes) override { return nullptr; }
   };
   DeviceAttributes attr;
@@ -123,8 +126,8 @@ TEST_F(PlacementTest, SelectDeviceExplicitHardPlacement) {
   requested.Clear();
   NodeDef invalid_op = NDef("invalid_op", "InvalidOp", {}, {});
 
-  Status status = context()->SelectDevice(requested, invalid_op, &dev);
-  LOG(ERROR) << status.ToString();
+  absl::Status status = context()->SelectDevice(requested, invalid_op, &dev);
+  LOG(ERROR) << status;
   EXPECT_TRUE(errors::IsNotFound(status));
   EXPECT_TRUE(
       absl::StrContains(status.message(), "Could not find device for node"))
@@ -164,8 +167,8 @@ TEST_F(PlacementTest, SelectDeviceExplicitSoftPlacement) {
   requested.Clear();
   NodeDef invalid_op = NDef("invalid_op", "InvalidOp", {}, {});
 
-  Status status = context()->SelectDevice(requested, invalid_op, &dev);
-  LOG(ERROR) << status.ToString();
+  absl::Status status = context()->SelectDevice(requested, invalid_op, &dev);
+  LOG(ERROR) << status;
   EXPECT_TRUE(errors::IsNotFound(status));
   EXPECT_TRUE(
       absl::StrContains(status.message(), "Could not find device for node"))

@@ -19,18 +19,18 @@ limitations under the License.
 
 namespace tensorflow {
 
-Status TfGraphToHloCompiler::Compile(const XlaCompiler::CompileOptions& options,
-                                     const NameAttrList& function,
-                                     absl::Span<const XlaArgument> args,
-                                     XlaCompilationResult* result) {
-  return xla_compiler_.CompileFunction(options, function, args, result);
+absl::Status TfGraphToHloCompiler::Compile(
+    const XlaCompiler::CompileOptions& options, const NameAttrList& function,
+    absl::Span<const XlaArgument> args, XlaCompilationResult* result) {
+  return ADD_SOURCE_LOCATION(
+      xla_compiler_.CompileFunction(options, function, args, result));
 }
 
-Status TfGraphToHloCompiler::CompileSingleOp(
+absl::Status TfGraphToHloCompiler::CompileSingleOp(
     const XlaCompiler::CompileOptions& options, const OpKernelContext* ctx,
     absl::Span<const XlaArgument> args, XlaCompilationResult* result) {
-  return xla_compiler_.CompileSingleOp(
-      options, XlaCompiler::SingleOpCompileArgument(*ctx), args, result);
+  return ADD_SOURCE_LOCATION(xla_compiler_.CompileSingleOp(
+      options, XlaCompiler::SingleOpCompileArgument(*ctx), args, result));
 }
 
 }  // namespace tensorflow

@@ -46,7 +46,7 @@ class UnifiedCAPI
   void SetUp() override {
     TF_StatusPtr status(TF_NewStatus());
     TF_SetTracingImplementation(std::get<0>(GetParam()), status.get());
-    Status s = StatusFromTF_Status(status.get());
+    absl::Status s = StatusFromTF_Status(status.get());
     CHECK_EQ(errors::OK, s.code()) << s.message();
   }
 };
@@ -1006,18 +1006,10 @@ TEST_P(UnifiedCAPI, TF_ExecutionContextGetTFEContextFromFunctionContextRaises) {
 
 // The above tests are run for a combination of:
 // - graphdef and MLIR tracing engine
-// - Using TFRT as an execution runtime (true == enable TFRT)
-#ifdef PLATFORM_GOOGLE
-INSTANTIATE_TEST_SUITE_P(Tracing, UnifiedCAPI,
-                         ::testing::Combine(::testing::Values("graphdef",
-                                                              "mlir"),
-                                            ::testing::Values(true, false)));
-#else
 INSTANTIATE_TEST_SUITE_P(Tracing, UnifiedCAPI,
                          ::testing::Combine(::testing::Values("graphdef",
                                                               "mlir"),
                                             ::testing::Values(false)));
-#endif
 
 }  // namespace
 }  // namespace tensorflow

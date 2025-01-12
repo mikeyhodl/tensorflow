@@ -15,6 +15,7 @@
 """Tests for `tf.data.Dataset.shuffle()`."""
 import collections
 import functools
+import sys
 
 from absl.testing import parameterized
 import numpy as np
@@ -29,6 +30,7 @@ from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.ops import options as options_lib
 from tensorflow.python.eager import def_function
 from tensorflow.python.framework import combinations
+from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
@@ -40,6 +42,17 @@ from tensorflow.python.ops import stateless_random_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
 from tensorflow.python.training import saver as saver_lib
+
+
+def make_variable_size_dataset(per_epoch_data):
+  repeat_counter = [0]
+
+  def gen():
+    for each in per_epoch_data[repeat_counter[0]]:
+      yield each
+    repeat_counter[0] += 1
+
+  return dataset_ops.Dataset.from_generator(gen, dtypes.int64)
 
 
 class ShuffleTest(test_base.DatasetTestBase, parameterized.TestCase):
@@ -95,7 +108,8 @@ class ShuffleTest(test_base.DatasetTestBase, parameterized.TestCase):
 
     # Assert that shuffling twice with a different seed gives a different
     # permutation of the same elements.
-    get_next = self.getNext(dataset_fn(buffer_size=100, seed=137))
+    get_next = self.getNext(dataset_fn(
+        buffer_size=100, seed=constant_op.constant(137, dtype=dtypes.int64)))
     reshuffled_elements_different_seed = []
     for _ in range(20):
       reshuffled_elements_different_seed.append(self.evaluate(get_next()))
@@ -152,8 +166,9 @@ class ShuffleTest(test_base.DatasetTestBase, parameterized.TestCase):
   @combinations.generate(test_base.default_test_combinations())
   def testDefaultArguments(self):
     components = [0, 1, 2, 3, 4]
-    dataset = dataset_ops.Dataset.from_tensor_slices(components).shuffle(
-        5).repeat()
+    dataset = (
+        dataset_ops.Dataset.from_tensor_slices(components).shuffle(5).repeat()
+    )
     get_next = self.getNext(dataset)
     counts = collections.defaultdict(lambda: 0)
     for _ in range(10):
@@ -162,6 +177,89 @@ class ShuffleTest(test_base.DatasetTestBase, parameterized.TestCase):
 
     for i in range(5):
       self.assertEqual(10, counts[i])
+
+  @combinations.generate(
+      combinations.times(
+          test_base.default_test_combinations(),
+          combinations.combine(
+              dataset_range=[100],
+              buffer_size=[None, 10, 200],
+              seed=[None, 42],
+              use_tensor_input=[True, False])))
+  def testTensorInput(self, dataset_range, buffer_size, seed, use_tensor_input):
+    dataset = dataset_ops.Dataset.range(dataset_range)
+    unshuffled_output = self.getDatasetOutput(dataset)
+
+    if buffer_size:
+      buffer_size = (
+          constant_op.constant(buffer_size, dtype=dtypes.int64)
+          if use_tensor_input else buffer_size)
+    else:
+      buffer_size = dataset.cardinality()
+    seed = (constant_op.constant(seed, dtype=dtypes.int64)
+            if seed and use_tensor_input else seed)
+
+    shuffled_dataset = dataset.shuffle(buffer_size, seed=seed)
+    shuffled_output = self.getDatasetOutput(shuffled_dataset)
+    self.assertEqual(unshuffled_output, list(range(dataset_range)))
+    self.assertCountEqual(shuffled_output, unshuffled_output)
+    self.assertNotEqual(shuffled_output, unshuffled_output)
+
+  @combinations.generate(test_base.default_test_combinations())
+  def testUnknownCardinality(self):
+    components = [0, 1, 2, 3, 4]
+    dataset = dataset_ops.Dataset.from_tensor_slices(components).shuffle(
+        dataset_ops.UNKNOWN
+    )
+    get_next = self.getNext(dataset)
+    counts = collections.defaultdict(lambda: 0)
+    for _ in range(1):
+      for _ in range(5):
+        counts[self.evaluate(get_next())] += 1
+
+    for i in range(5):
+      self.assertEqual(1, counts[i])
+
+  @combinations.generate(test_base.default_test_combinations())
+  def testUnknownCardinalityWithRepeatedShuffle(self):
+    components = [0, 1, 2, 3, 4]
+    dataset = (
+        dataset_ops.Dataset.from_tensor_slices(components)
+        .shuffle(dataset_ops.UNKNOWN)
+        .repeat()
+    )
+    get_next = self.getNext(dataset)
+    counts = collections.defaultdict(lambda: 0)
+    for _ in range(10):
+      for _ in range(5):
+        counts[self.evaluate(get_next())] += 1
+
+    for i in range(5):
+      self.assertEqual(10, counts[i])
+
+  @combinations.generate(test_base.default_test_combinations())
+  def testUnknownCardinalityWithIncreasingBufferSize(self):
+    epoch_1 = list(range(5))
+    epoch_2 = list(range(10, 17))
+    epoch_3 = list(range(20, 28))
+
+    ds = make_variable_size_dataset([epoch_1, epoch_2, epoch_3])
+    ds = ds.shuffle(dataset_ops.UNKNOWN).repeat(3)
+
+    expected = epoch_1 + epoch_2 + epoch_3
+    self.assertDatasetProduces(ds, expected, assert_items_equal=True)
+
+  @combinations.generate(test_base.default_test_combinations())
+  def testUnknownCardinalityWithVariableBufferSize(self):
+    epoch_1 = list(range(5))
+    epoch_2 = list(range(10, 13))
+    epoch_3 = list(range(20, 27))
+
+    ds = make_variable_size_dataset([epoch_1, epoch_2, epoch_3])
+    ds = ds.shuffle(dataset_ops.UNKNOWN).repeat(3)
+
+    expected = epoch_1 + epoch_2 + epoch_3
+    self.assertDatasetProduces(ds, expected, assert_items_equal=True)
 
   @combinations.generate(test_base.default_test_combinations())
   def testInputInitializations(self):
@@ -407,6 +505,8 @@ class ShuffleTest(test_base.DatasetTestBase, parameterized.TestCase):
         pywrap_sanitizers.is_tsan_enabled() or
         pywrap_sanitizers.is_msan_enabled()):
       self.skipTest("Skip to avoid OOM when using sanitizers.")
+    if sys.platform == "darwin":
+      self.skipTest("Skip to avoid memory issues on mac.")
     dataset = dataset_ops.Dataset.range(12).batch(2)
     dataset = dataset.map(
         # Create tensors of size 512M.
@@ -467,7 +567,7 @@ class ShuffleCheckpointTest(checkpoint_test_base.CheckpointTestBase,
           combinations.combine(
               symbolic_checkpoint=[True, False],
               reshuffle_each_iteration=[True, False],
-              buffer_size=[1, 3, 5, 8, 10],
+              buffer_size=[1, 3, 5, 8, 10, dataset_ops.UNKNOWN],
           ),
       )
   )

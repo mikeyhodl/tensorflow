@@ -19,6 +19,7 @@ limitations under the License.
 #include <functional>
 #include <vector>
 
+#include "xla/tsl/protobuf/rpc_options.pb.h"
 #include "tensorflow/core/distributed_runtime/worker_cache.h"
 #include "tensorflow/core/protobuf/cluster.pb.h"
 #include "tensorflow/core/protobuf/config.pb.h"
@@ -39,24 +40,22 @@ class OpRegistryInterface;
 
 // Options passed to the worker_cache_factory function.
 struct WorkerCacheFactoryOptions {
-  const ClusterDef* cluster_def = nullptr;
-  const string* job_name = nullptr;
+  ClusterDef cluster_def;
+  string job_name;
   int task_index;
-  const string* protocol = nullptr;
-  const RPCOptions* rpc_options = nullptr;
+  int replica_index = 0;
+  RPCOptions rpc_options;
 
-  WorkerCacheFactoryOptions() {}
+  explicit WorkerCacheFactoryOptions() = default;
 
   // Construct from a ServerDef proto.
-  //
-  // Note: server_def must outlive WorkerCacheFactoryOptions!
-  WorkerCacheFactoryOptions(const ServerDef& server_def) {
+  explicit WorkerCacheFactoryOptions(const ServerDef& server_def) {
     if (server_def.has_cluster() && !server_def.job_name().empty()) {
-      cluster_def = &server_def.cluster();
-      job_name = &server_def.job_name();
+      cluster_def = server_def.cluster();
+      job_name = server_def.job_name();
       task_index = server_def.task_index();
-      protocol = &server_def.protocol();
-      rpc_options = &server_def.default_session_config().rpc_options();
+      rpc_options = server_def.default_session_config().rpc_options();
+      replica_index = server_def.replica();
     }
   }
 };
@@ -100,8 +99,8 @@ struct MasterEnv {
       std::vector<string> filtered_worker_list)>
       master_session_factory;
 
-  std::function<Status(const WorkerCacheFactoryOptions&,
-                       WorkerCacheInterface**)>
+  std::function<absl::Status(const WorkerCacheFactoryOptions&,
+                             WorkerCacheInterface**)>
       worker_cache_factory;
 
   // Generates per-step CollectiveExecutors and has access to utilities

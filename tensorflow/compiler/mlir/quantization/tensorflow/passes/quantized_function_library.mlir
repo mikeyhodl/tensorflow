@@ -450,50 +450,62 @@ module {
   //===----------------------------------------------------------------------===//
   // Weight-only functions.
   //===----------------------------------------------------------------------===//
+  // Requantize to the output quantization parameters.
+  func.func private @internal_requantize_fn(%input : tensor<*xi8>,
+                         %input_scale : tensor<*xf32>, %input_zp : tensor<*xi32>,
+                         %out_scale : tensor<*xf32>, %out_zp : tensor<*xi32>) -> tensor<*xi8> {
+    %rescale_factor = "tf.Div"(%input_scale, %out_scale) : (tensor<*xf32>, tensor<*xf32>) -> tensor<*xf32>
+    %float_in_zp = "tf.Cast"(%input_zp) {Truncate = false} : (tensor<*xi32>) -> tensor<*xf32>
+    %float_out_zp = "tf.Cast"(%out_zp) {Truncate = false} : (tensor<*xi32>) -> tensor<*xf32>
 
-  func.func private @internal_dequantize_i8_in_f32_fn(
-                           %input : tensor<*xi8>, %weight_scale : tensor<*xf32>) -> tensor<*xf32> {
-    %input_f32 = "tf.Cast"(%input) : (tensor<*xi8>) -> tensor<*xf32>
-    %mul = "tf.Mul"(%input_f32, %weight_scale) : (tensor<*xf32>, tensor<*xf32>) -> tensor<*xf32>
-    func.return %mul : tensor<*xf32>
+    %cast = "tf.Cast"(%input) {Truncate = false} : (tensor<*xi8>) -> tensor<*xf32>
+    %sub = "tf.Sub"(%cast, %float_in_zp) : (tensor<*xf32>, tensor<*xf32>) -> tensor<*xf32>
+    %mul = "tf.Mul"(%sub, %rescale_factor) : (tensor<*xf32>, tensor<*xf32>) -> tensor<*xf32>
+    %add = "tf.AddV2"(%mul, %float_out_zp) : (tensor<*xf32>, tensor<*xf32>) -> tensor<*xf32>
+
+    %i8_min = "tf.Const"() {value = dense<-128.0> : tensor<f32>} : () -> tensor<f32>
+    %i8_max = "tf.Const"() {value = dense<127.0> : tensor<f32>} : () -> tensor<f32>
+
+    %clamp_max = "tf.Maximum"(%add, %i8_min) : (tensor<*xf32>, tensor<f32>) -> tensor<*xf32>
+    %clamp_min = "tf.Minimum"(%clamp_max, %i8_max) : (tensor<*xf32>, tensor<f32>) -> tensor<*xf32>
+    %round = "tf.Round"(%clamp_min) : (tensor<*xf32>) -> tensor<*xf32>
+    %cast2 = "tf.Cast"(%round) {Truncate = false} : (tensor<*xf32>) -> tensor<*xi8>
+    func.return %cast2 : tensor<*xi8>
   }
+
 
   // Note that input i64 type is also supported by this.
   // As the output is quantized type, output scale/zp is required for the arguments.
-  parameters[
-    {"quantized_ops": ["Gather"], "act_func": "internal_identity_fn", "output_type": "i8"}
-  ]
-  func.func @GenerateQuantizedFunctionName(${quantized_ops}, "${output_type}")(
+  func.func @quantized_gather_fn(
                          %weight : tensor<*xi8>, %input : tensor<*xi32>, %axis : tensor<i32>,
                          %weight_scale : tensor<*xf32>, %weight_zp : tensor<*xi32>,
-                         %out_scale : tensor<*xf32>, %out_zp : tensor<*xi32>) -> tensor<*x${output_type}>
-      attributes {tf_quant.quantized_ops = ${quantized_ops}} {
+                         %out_scale : tensor<*xf32>, %out_zp : tensor<*xi32>) -> tensor<*xi8>
+      attributes {tf_quant.quantized_ops = ["Gather"]} {
 
     %out = "tf.GatherV2"(%weight, %input, %axis) {
       batch_dims = 0 : i64, attr_map = "batch_dims:0"} : (tensor<*xi8>, tensor<*xi32>, tensor<i32>) -> tensor<*xi8>
 
-    func.return %out : tensor<*x${output_type}>
+    // Requantize as the output quantization params can be different than the input for Gather ops.
+    // Ex: Input can be per-axis quantized while output can be per-tensor.
+    %requantize = "tf.PartitionedCall"(%out, %weight_scale, %weight_zp, %out_scale, %out_zp) {
+        config = "", config_proto = "", executor_type = "", f=@internal_requantize_fn
+      } : (tensor<*xi8>, tensor<*xf32>, tensor<*xi32>, tensor<*xf32>, tensor<*xi32>) -> tensor<*xi8>
+
+    func.return %requantize : tensor<*xi8>
   }
 
-  // Note that input i64 type is also supported by this.
-  // The dequantization is merged to the quantized function.
-  // As the output type is specified to f32, the quantized function has "_float_output_fn" tag at the end.
-  parameters[
-    {"quantized_ops": ["Gather"], "act_func": "internal_dequantize_i8_in_f32_fn", "output_type": "f32"}
-  ]
-  func.func @GenerateQuantizedFunctionName(${quantized_ops}, "${output_type}")(
+  func.func @quantized_gather_hybrid_fn(
                          %weight : tensor<*xi8>, %input : tensor<*xi32>, %axis : tensor<i32>,
-                         %weight_scale : tensor<*xf32>, %weight_zp : tensor<*xi32>) -> tensor<*x${output_type}>
-      attributes {tf_quant.quantized_ops = ${quantized_ops}} {
+                         %weight_scale : tensor<*xf32>, %weight_zp : tensor<*xi32>) -> tensor<*xf32>
+      attributes {tf_quant.quantized_ops = ["Gather"]} {
 
     %accum_out = "tf.GatherV2"(%weight, %input, %axis) {
       batch_dims = 0 : i64, attr_map = "batch_dims:0"} : (tensor<*xi8>, tensor<*xi32>, tensor<i32>) -> tensor<*xi8>
 
-    %out = "tf.PartitionedCall"(%accum_out, %weight_scale) {
-        config = "", config_proto = "", executor_type = "", f=@${act_func}
-      } : (tensor<*xi8>, tensor<*xf32>) -> tensor<*x${output_type}>
+    %out = "tf.PartitionedCall"(%accum_out, %weight_scale, %weight_zp) {
+        config = "", config_proto = "", executor_type = "", f=@internal_dequantize_i8_fn
+      } : (tensor<*xi8>, tensor<*xf32>, tensor<*xi32>) -> tensor<*xf32>
 
-    func.return %out : tensor<*x${output_type}>
+    func.return %out : tensor<*xf32>
   }
-
 }

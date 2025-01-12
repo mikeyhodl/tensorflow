@@ -16,6 +16,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -214,7 +215,7 @@ void AlternativeSubgraphPass::Optimize(func::FuncOp func,
                                        const std::string& hardware) {
   auto* ctx = &getContext();
   RewritePatternSet patterns = GetHardwareRewritePatterns(ctx, hardware);
-  (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
+  (void)applyPatternsGreedily(func, std::move(patterns));
 }
 
 // Get the alternative view of the func for the given device_inference_type.

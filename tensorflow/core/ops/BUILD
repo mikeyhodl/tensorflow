@@ -2,6 +2,10 @@
 # Tensorflow default op definitions.
 
 load(
+    "@local_xla//xla/tsl/mkl:build_defs.bzl",
+    "if_mkl",
+)
+load(
     "//tensorflow:tensorflow.bzl",
     "tf_cc_test",
 )
@@ -13,10 +17,6 @@ load(
 load(
     "//tensorflow/core/platform:rules_cc.bzl",
     "cc_library",
-)
-load(
-    "//third_party/mkl:build_defs.bzl",
-    "if_mkl",
 )
 
 # A lot of packages try to minimize binary size by depending on individual ops,\
@@ -84,12 +84,12 @@ tf_gen_op_libs(
         "set_ops",
         "script_ops",
         "sendrecv_ops",
-        "sparse_csr_matrix_ops",
         "sparse_ops",
         "spectral_ops",
         "state_ops",
         "stateless_random_ops",
         "stateless_random_ops_v2",
+        "stochastic_cast_op",
         "sync_ops",
         "summary_ops",
         "training_ops",
@@ -98,6 +98,18 @@ tf_gen_op_libs(
     deps = [
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
+    ],
+)
+
+tf_gen_op_libs(
+    is_external = False,
+    op_lib_names = ["sparse_csr_matrix_ops"],
+    sub_directory = "",
+    deps = [
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -315,6 +327,7 @@ cc_library(
         ":stateful_random_ops_op_lib",
         ":stateless_random_ops_op_lib",
         ":stateless_random_ops_v2_op_lib",
+        ":stochastic_cast_op_op_lib",
         ":string_ops_op_lib",
         ":summary_ops_op_lib",
         ":sync_ops_op_lib",
@@ -458,7 +471,7 @@ tf_cc_test(
         "//tensorflow/core/kernels:cwise_op",
         "//tensorflow/core/kernels:function_ops",
         "//tensorflow/core/kernels:math",
-        "//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -486,7 +499,7 @@ tf_cc_test(
         "//tensorflow/core/kernels:data_flow",
         "//tensorflow/core/kernels:function_ops",
         "//tensorflow/core/kernels:math",
-        "//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -515,6 +528,7 @@ tf_cc_test(
         "sparse_ops_test.cc",
         "spectral_ops_test.cc",
         "state_ops_test.cc",
+        "stochastic_cast_op_test.cc",
         "string_ops_test.cc",
         "tpu_cross_replica_ops_test.cc",
         "training_ops_test.cc",
@@ -535,6 +549,5 @@ tf_cc_test(
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
         "//tensorflow/core/common_runtime:type_inference",
-        "//third_party/eigen3",
     ],
 )

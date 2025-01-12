@@ -18,8 +18,10 @@ limitations under the License.
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "tensorflow/core/framework/tensor_shape.pb.h"
@@ -93,36 +95,44 @@ struct GraphImportConfig {
   // If set, use the value as the device type and mark the function graph for
   // XLA compilation.
   string xla_compile_device_type;
+  // If true, enables moving ops to different devices or moving unsupported ops
+  // out of a compilation cluster.
+  bool enable_soft_placement = false;
+  // If true, a function attribute, `tf._original_func_name`, will be set in
+  // functions which contains the corresponding original TF function name.
+  bool set_original_tf_func_name = false;
+
+  // If true, all functions in the graph will be converted to MLIR regardless of
+  // whether the functions are referenced by the nodes. This is needed if
+  // aliases and saved model object graph function matching is needed.
+  bool convert_all_functions_to_mlir = false;
 };
 
 struct GraphExportConfig {
-  // Whether to export shape attribute for the NodeDefs in the GraphDef.
-  bool export_shapes = true;
-  // Whether to export library field in the GraphDef.
-  bool export_library = true;
-  // Whether to export debug original node name in the GraphDef.
-  bool export_debug_info = true;
   // Whether to export the entry function to function library instead of the
   // graph.
   bool export_entry_func_to_flib = false;
+  // Whether to export functions using the name set in the attribute
+  // `tf._original_func_name` if it exists.
+  bool export_original_tf_func_name = false;
 };
 
 // Parses the command line flag strings to the specification of nodes in
 // the Graph.
-Status ParseOutputArrayInfo(absl::string_view array_names,
-                            std::vector<string>* outputs);
+absl::Status ParseOutputArrayInfo(absl::string_view array_names,
+                                  std::vector<string>* outputs);
 
-Status ParseOutputArrayInfo(const std::vector<string>& output_names,
-                            std::vector<string>* outputs);
+absl::Status ParseOutputArrayInfo(const std::vector<string>& output_names,
+                                  std::vector<string>* outputs);
 
 // Parses the command line flag strings to the specification of nodes in
 // the Graph. `data_types` input string can be empty since the flag is optional.
-Status ParseInputArrayInfo(absl::string_view array_names,
-                           absl::string_view data_types,
-                           absl::string_view shapes,
-                           GraphImportConfig::InputArrays* inputs);
+absl::Status ParseInputArrayInfo(absl::string_view array_names,
+                                 absl::string_view data_types,
+                                 absl::string_view shapes,
+                                 GraphImportConfig::InputArrays* inputs);
 
-Status ParseInputArrayInfo(
+absl::Status ParseInputArrayInfo(
     const std::vector<string>& node_names,
     const std::vector<string>& node_dtypes,
     const std::vector<std::optional<std::vector<int>>>& node_shapes,
@@ -131,19 +141,19 @@ Status ParseInputArrayInfo(
 // Parses shapes from the given string into shapes_vector which is a structured
 // format.
 // NOTE: If shapes_str is empty, shapes_vector will also be empty.
-Status ParseNodeShapes(
+absl::Status ParseNodeShapes(
     absl::string_view shapes_str,
     std::vector<std::optional<std::vector<int>>>& shapes_vector);
 
 // Parses names from the given string into the names_vector.
 // NOTE: If names_str is empty, names_vector will also be empty.
-Status ParseNodeNames(absl::string_view names_str,
-                      std::vector<std::string>& names_vector);
+absl::Status ParseNodeNames(absl::string_view names_str,
+                            std::vector<std::string>& names_vector);
 
 // Parses data types from the given string into the data_type_vector.
 // NOTE: If data_types_str is empty, data_type_vector will also be empty.
-Status ParseNodeDataTypes(absl::string_view data_types_str,
-                          std::vector<std::string>& data_type_vector);
+absl::Status ParseNodeDataTypes(absl::string_view data_types_str,
+                                std::vector<std::string>& data_type_vector);
 
 }  // namespace tensorflow
 

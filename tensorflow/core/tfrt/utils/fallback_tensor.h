@@ -15,9 +15,11 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_TFRT_UTILS_FALLBACK_TENSOR_H_
 #define TENSORFLOW_CORE_TFRT_UTILS_FALLBACK_TENSOR_H_
 
-#include "absl/types/variant.h"
+#include <utility>
+
 #include "tensorflow/core/common_runtime/dma_helper.h"
 #include "tensorflow/core/framework/tensor.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace tensorflow {
 namespace tfrt_stub {
@@ -57,11 +59,12 @@ class FallbackTensor {
       : tensor_(std::move(tensor)) {}
 
   explicit FallbackTensor(ImmutableTensor* immutable_tensor)
-      : tensor_(immutable_tensor) {}
+      : tensor_(immutable_tensor->tensor()), is_immutable_(true) {}
 
   FallbackTensor(const FallbackTensor& other) { *this = other; }
   FallbackTensor& operator=(const FallbackTensor& other) {
-    if (!other.is_immutable()) {
+    tsl::profiler::TraceMe trace_me("FallbackTensor::Copy");
+    if (!other.is_immutable() && other.buffer() != nullptr) {
       // Create a new TensorBuffer which contains a new atomic counter for each
       // result, to avoid downstream threads contending the original atomic
       // counter.
@@ -69,33 +72,30 @@ class FallbackTensor {
           tensorflow::tfrt_stub::ImmutableTensor::Create(other.tensor())
               .tensor());
     } else {
-      // For immutable tensors, we just need to copy the pointer.
+      // For immutable tensors or empty tensors, we just need to copy the
+      // pointer as they don't incur atomic operations when they are referenced.
       tensor_ = other.tensor();
     }
+    is_immutable_ = true;
     return *this;
   }
 
-  FallbackTensor(FallbackTensor&&) = default;
-  FallbackTensor& operator=(FallbackTensor&&) = default;
+  FallbackTensor(FallbackTensor&&) noexcept = default;
+  FallbackTensor& operator=(FallbackTensor&&) noexcept = default;
 
   const TensorBuffer* buffer() const {
     return tensorflow::DMAHelper::buffer(&tensor());
   }
+  TensorBuffer* buffer() { return tensorflow::DMAHelper::buffer(&tensor()); }
 
-  bool is_immutable() const {
-    return absl::holds_alternative<ImmutableTensor*>(tensor_);
-  }
+  bool is_immutable() const { return is_immutable_; }
 
-  tensorflow::Tensor& tensor() {
-    if (is_immutable()) return absl::get<ImmutableTensor*>(tensor_)->tensor();
-    return absl::get<tensorflow::Tensor>(tensor_);
-  }
-  const tensorflow::Tensor& tensor() const {
-    return const_cast<FallbackTensor*>(this)->tensor();
-  }
+  tensorflow::Tensor& tensor() { return tensor_; }
+  const tensorflow::Tensor& tensor() const { return tensor_; }
 
  private:
-  absl::variant<absl::monostate, tensorflow::Tensor, ImmutableTensor*> tensor_;
+  tensorflow::Tensor tensor_;
+  bool is_immutable_ = false;
 };
 
 }  // namespace tfrt_stub

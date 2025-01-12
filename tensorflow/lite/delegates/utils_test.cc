@@ -16,12 +16,10 @@ limitations under the License.
 
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/memory/memory.h"
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/core/subgraph.h"
 
@@ -77,7 +75,7 @@ TEST(UtilsTest, CreateNewTensorWithDifferentTypeTest) {
   TfLiteIntArrayFree(tensors[1].dims);
 }
 
-TEST(UtilsTest, GetSubgraphContextTest) {
+TEST(UtilsTest, AcquireAndReleaseSubgraphContextTest) {
   std::vector<std::unique_ptr<Subgraph>> subgraphs;
   for (int i = 0; i < 5; ++i) {
     subgraphs.emplace_back(new Subgraph(/*error_reporter=*/nullptr,
@@ -89,8 +87,12 @@ TEST(UtilsTest, GetSubgraphContextTest) {
                                         /*subgraph_index=*/i));
   }
   TfLiteContext* context = subgraphs[0]->context();
+  subgraphs[0]->context();
 
-  EXPECT_EQ(subgraphs[2]->context(), GetSubgraphContext(context, 2));
+  TfLiteContext* acquired_context;
+  EXPECT_EQ(kTfLiteOk, AcquireSubgraphContext(context, 2, &acquired_context));
+  EXPECT_EQ(subgraphs[2]->context(), acquired_context);
+  EXPECT_EQ(kTfLiteOk, ReleaseSubgraphContext(context, 2));
 }
 
 TEST(UtilsTest, MarkSubgraphAsDelegationSkippableTest) {
@@ -201,7 +203,7 @@ class MockTfLiteContext : public TfLiteContext {
   // For simplicity, the mocked graph has only type of node and one
   // registration.
   TfLiteNode node_;
-  TfLiteRegistration registration_;
+  TfLiteRegistration registration_{};
 
   // The TfLiteDelegateParams object that's manually populated inside the mocked
   // TfLiteContext::PreviewDelegatePartitioning.

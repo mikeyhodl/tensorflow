@@ -389,6 +389,10 @@ bool IsMirrorPadGrad(const NodeDef& node) {
   return node.op() == "MirrorPadGrad";
 }
 
+bool IsMklFusedMish(const NodeDef& node) {
+  return node.op() == "_MklFusedMish";
+}
+
 bool IsMod(const NodeDef& node) { return node.op() == "Mod"; }
 
 bool IsMul(const NodeDef& node) { return node.op() == "Mul"; }
@@ -440,7 +444,7 @@ bool IsQuantizedMatMul(const NodeDef& node) {
 }
 
 bool IsQueue(const NodeDef& node) {
-  return str_util::EndsWith(node.op(), "QueueV2");
+  return absl::EndsWith(node.op(), "QueueV2");
 }
 
 bool IsRandomShuffle(const NodeDef& node) {
@@ -678,7 +682,7 @@ bool IsPersistent(const NodeDef& node) {
 
 bool HasRefInput(const NodeDef& node) {
   const OpDef* op_def;
-  Status status = OpRegistry::Global()->LookUpOpDef(node.op(), &op_def);
+  absl::Status status = OpRegistry::Global()->LookUpOpDef(node.op(), &op_def);
   if (!status.ok()) {
     return false;
   }
@@ -698,10 +702,10 @@ bool IsDataset(const NodeDef& node) {
          op == "DatasetToSingleElement" || op == "ReduceDataset";
 }
 
-bool IsStateful(const NodeDef node, const OpRegistryInterface* op_registry) {
+bool IsStateful(const NodeDef& node, const OpRegistryInterface* op_registry) {
   const OpDef* op_def = nullptr;
   const string& op_name = node.op();
-  Status status = op_registry->LookUpOpDef(op_name, &op_def);
+  absl::Status status = op_registry->LookUpOpDef(op_name, &op_def);
   if (!status.ok()) {
     LOG(WARNING) << "Failed to lookup OpDef for " << op_name
                  << ". Error: " << status.message();
@@ -710,7 +714,7 @@ bool IsStateful(const NodeDef node, const OpRegistryInterface* op_registry) {
   return op_def->is_stateful();
 }
 
-bool IsStateful(const NodeDef node) {
+bool IsStateful(const NodeDef& node) {
   return IsStateful(node, OpRegistry::Global());
 }
 
@@ -722,7 +726,7 @@ bool IsFreeOfSideEffect(const NodeDef& node,
   }
   const OpDef* op_def = nullptr;
   const string& op_name = node.op();
-  Status status = op_registry->LookUpOpDef(op_name, &op_def);
+  absl::Status status = op_registry->LookUpOpDef(op_name, &op_def);
   if (!status.ok()) {
     return false;
   }

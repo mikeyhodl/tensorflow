@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_MLIR_TENSORFLOW_UTILS_TRANSLATE_UTILS_H_
 #define TENSORFLOW_COMPILER_MLIR_TENSORFLOW_UTILS_TRANSLATE_UTILS_H_
 
+#include "absl/status/statusor.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
@@ -37,7 +38,7 @@ mlir::LogicalResult ExtractTfVersions(mlir::ModuleOp module,
 
 // Returns TensorFlow GraphDef producer version for the given module. Returns an
 // error if the version information is missing for the module or is not valid.
-::tsl::StatusOr<int64_t> GetTfGraphProducerVersion(mlir::ModuleOp module);
+absl::StatusOr<int64_t> GetTfGraphProducerVersion(mlir::ModuleOp module);
 
 }  // namespace tensorflow
 

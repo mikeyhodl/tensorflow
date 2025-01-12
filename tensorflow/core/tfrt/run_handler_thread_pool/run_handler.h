@@ -16,10 +16,18 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_TFRT_RUN_HANDLER_THREAD_POOL_RUN_HANDLER_H_
 #define TENSORFLOW_CORE_TFRT_RUN_HANDLER_THREAD_POOL_RUN_HANDLER_H_
 
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "tensorflow/core/lib/core/threadpool.h"
 #include "tensorflow/core/lib/histogram/histogram.h"
 #include "tensorflow/core/platform/context.h"

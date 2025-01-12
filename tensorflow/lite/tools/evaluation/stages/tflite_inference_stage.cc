@@ -14,17 +14,34 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/lite/tools/evaluation/stages/tflite_inference_stage.h"
 
-#include <cstring>
+#include <cstdint>
 #include <fstream>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "absl/base/attributes.h"
+#include "absl/log/log.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/lite/core/c/common.h"
+#include "tensorflow/lite/core/interpreter_builder.h"
+#include "tensorflow/lite/core/kernels/register.h"
+#include "tensorflow/lite/interpreter.h"
+#include "tensorflow/lite/model_builder.h"
+#include "tensorflow/lite/mutable_op_resolver.h"
 #include "tensorflow/lite/profiling/time.h"
+#include "tensorflow/lite/tools/evaluation/evaluation_delegate_provider.h"
+#include "tensorflow/lite/tools/evaluation/proto/evaluation_config.pb.h"
 #include "tensorflow/lite/tools/evaluation/proto/evaluation_stages.pb.h"
-#include "tensorflow/lite/tools/evaluation/utils.h"
+
+void RegisterSelectedOps(::tflite::MutableOpResolver* resolver);
+
+// Version with Weak linker attribute doing nothing: if someone links this
+// library with another definition of this function (presumably to actually
+// register custom ops), that version will be used instead.
+void ABSL_ATTRIBUTE_WEAK
+RegisterSelectedOps(::tflite::MutableOpResolver* resolver) {}
 
 namespace tflite {
 namespace evaluation {
@@ -126,11 +143,12 @@ TfLiteStatus TfliteInferenceStage::Init(
   }
 
   if (apply_default_delegates) {
-    resolver_ = std::make_unique<ops::builtin::BuiltinOpResolverWithXNNPACK>();
+    resolver_ = std::make_unique<ops::builtin::BuiltinOpResolver>();
   } else {
     resolver_ = std::make_unique<
         ops::builtin::BuiltinOpResolverWithoutDefaultDelegates>();
   }
+  RegisterSelectedOps(resolver_.get());
   InterpreterBuilder(*model_, *resolver_)(&interpreter_);
   if (!interpreter_) {
     LOG(ERROR) << "Could not build interpreter";

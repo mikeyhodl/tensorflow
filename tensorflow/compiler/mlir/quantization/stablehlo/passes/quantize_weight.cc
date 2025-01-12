@@ -14,42 +14,50 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
-#include <cstdint>
 #include <memory>
-#include <string>
 #include <utility>
 #include <vector>
 
-#include "third_party/eigen3/Eigen/Core"
-#include "llvm/Support/CommandLine.h"
+#include "Eigen/Core"  // from @eigen_archive
+#include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/Quant/QuantOps.h"  // from @llvm-project
-#include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/Dialect.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/PatternMatch.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
+#include "mlir/Rewrite/FrozenRewritePatternSet.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Support/TypeID.h"  // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
 #include "tensorflow/compiler/mlir/quantization/stablehlo/passes/passes.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/quantization_options.pb.h"
+#include "tensorflow/compiler/mlir/quantization/stablehlo/utils/fill_quantization_options.h"
 
 // NOLINTNEXTLINE
 //===----------------------------------------------------------------------===//
 // The Quantization Pass for Weight.
 //===----------------------------------------------------------------------===//
-namespace mlir {
-namespace stablehlo {
 
-namespace {
+namespace mlir::quant::stablehlo {
+
+// Put the definitions inside the ::mlir::quant::stablehlo namespace, to match
+// the declarations in passes.h.
 #define GEN_PASS_DEF_QUANTIZEWEIGHTPASS
 #include "tensorflow/compiler/mlir/quantization/stablehlo/passes/passes.h.inc"
 
+namespace {
+
 using QuantizationUnits = llvm::SetVector<std::pair<Operation*, int>>;
+using mlir::stablehlo::ConstantOp;
+using mlir::stablehlo::ConvertOp;
+using ::stablehlo::quantization::QuantizationComponentSpec;
 
 // Min/Max values used for creating ConstantOp.
 constexpr float kMaxFloat16Value = 65504.f;
@@ -58,30 +66,23 @@ constexpr float kMinFloat16Value = -65504.f;
 class QuantizeWeightPass
     : public impl::QuantizeWeightPassBase<QuantizeWeightPass> {
  public:
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(QuantizeWeightPass)
-
   explicit QuantizeWeightPass(
-      ::stablehlo::quantization::QuantizationOptions quantization_options) {}
-
-  StringRef getArgument() const final {
-    // This is the argument used to refer to the pass in
-    // the textual format (on the commandline for example).
-    return "stablehlo-quantize-weight";
-  }
-
-  StringRef getDescription() const final {
-    return "Apply the specified quantization methods to weights.";
-  }
+      QuantizationComponentSpec quantization_component_spec)
+      : quantization_component_spec_(quantization_component_spec) {}
 
  private:
   void runOnOperation() override;
+  QuantizationComponentSpec quantization_component_spec_;
 };
 
 // Collects quantizable target ops, then insert Q-DQ quantization patterns.
 class QuantizeWeight : public OpRewritePattern<ConstantOp> {
  public:
-  explicit QuantizeWeight(MLIRContext* context)
-      : OpRewritePattern<ConstantOp>(context) {}
+  explicit QuantizeWeight(
+      MLIRContext* context,
+      const QuantizationComponentSpec& quantization_component_spec)
+      : OpRewritePattern<ConstantOp>(context),
+        quantization_component_spec_(quantization_component_spec) {}
 
   LogicalResult matchAndRewrite(ConstantOp op,
                                 PatternRewriter& rewriter) const override {
@@ -104,19 +105,20 @@ class QuantizeWeight : public OpRewritePattern<ConstantOp> {
   }
 
  private:
+  const QuantizationComponentSpec quantization_component_spec_;
   // Marks users that are applicable for quantization where the criteria for
   // determining quantizable ops differs by the inference type.
   QuantizationUnits GetQuantizableOps(ConstantOp op) const {
     // Non-float tensors do not need quantization.
     QuantizationUnits quantizable_ops;
-    ShapedType type = op.getType().dyn_cast<ShapedType>();
+    const ShapedType type = mlir::dyn_cast<ShapedType>(op.getType());
     if (!type || !type.getElementType().isF32()) return quantizable_ops;
 
-    Value value = op.getResult();
+    const Value value = op.getResult();
 
     for (OpOperand& use : value.getUses()) {
       Operation* user = use.getOwner();
-      int operand_num = use.getOperandNumber();
+      const int operand_num = use.getOperandNumber();
       quantizable_ops.insert({user, operand_num});
     }
     return quantizable_ops;
@@ -125,12 +127,12 @@ class QuantizeWeight : public OpRewritePattern<ConstantOp> {
   // Returns whether quantization is applied to filtered users.
   bool QuantizeOps(PatternRewriter& rewriter, ConstantOp op,
                    const QuantizationUnits& quantizable_ops) const {
-    // TODO(b/212514817): refactor mode checking to improve code quality.
     for (const std::pair<Operation*, int>& quant_op : quantizable_ops) {
       // For f16 quantization, quantize all constant ops as float16.
       QuantizeOpAsFloat16(rewriter, op, quant_op);
     }
-    // TODO(b/264218457): Return a value that accurately captures result status.
+    // TODO: b/264218457 - Return a value that accurately captures result
+    // status.
     return true;
   }
 
@@ -141,20 +143,20 @@ class QuantizeWeight : public OpRewritePattern<ConstantOp> {
   // conversion.
   void QuantizeOpAsFloat16(PatternRewriter& rewriter, ConstantOp op,
                            const std::pair<Operation*, int> quant_op) const {
-    auto [quantizable_op, quantize_operand_num] = quant_op;
+    const auto [quantizable_op, quantize_operand_num] = quant_op;
     // If the constant is an output tensor, do nothing.
     if (isa<func::ReturnOp>(quantizable_op)) {
       return;
     }
 
     TensorType old_result_type =
-        op.getResult().getType().dyn_cast<TensorType>();
-    FloatType quantized_type = FloatType::getF16(op.getContext());
-    ShapedType new_result_type = old_result_type.clone(quantized_type);
+        mlir::dyn_cast<TensorType>(op.getResult().getType());
+    const FloatType quantized_type = FloatType::getF16(op.getContext());
+    const ShapedType new_result_type = old_result_type.clone(quantized_type);
 
     // Insert ConvertOp if it does not exist yet. Otherwise, just rewire without
     // creating a ConvertOp.
-    for (OpOperand& connected_op : op.getResult().getUses()) {
+    for (const OpOperand& connected_op : op.getResult().getUses()) {
       ConvertOp convert_op =
           dyn_cast_or_null<ConvertOp>(connected_op.getOwner());
       // ConvertOp already exists. Rewire the existing convert op into f16.
@@ -180,23 +182,24 @@ class QuantizeWeight : public OpRewritePattern<ConstantOp> {
       if (!convert_op || convert_op.getResult().use_empty()) continue;
 
       // Get types.
-      Type old_result_type = op.getResult().getType();
-      ShapedType new_result_type = convert_op.getType().dyn_cast<ShapedType>();
+      const Type old_result_type = op.getResult().getType();
+      const ShapedType new_result_type =
+          mlir::dyn_cast<ShapedType>(convert_op.getType());
 
       // Proceeds only if the converting is to float16.
       if (!new_result_type.getElementType().isF16()) continue;
 
       // Convert values.
       std::vector<Eigen::half> new_values;
-      DenseFPElementsAttr value_attr =
-          op.getValue().cast<DenseFPElementsAttr>();
+      const DenseFPElementsAttr value_attr =
+          mlir::cast<DenseFPElementsAttr>(op.getValue());
       new_values.reserve(value_attr.getNumElements());
 
-      for (float value : value_attr.getValues<float>()) {
+      for (const float value : value_attr.getValues<float>()) {
         new_values.push_back(Eigen::half(
             std::min(std::max(value, kMinFloat16Value), kMaxFloat16Value)));
       }
-      DenseElementsAttr new_value_attr = DenseFPElementsAttr::get(
+      const DenseElementsAttr new_value_attr = DenseFPElementsAttr::get(
           new_result_type, ArrayRef<Eigen::half>(new_values));
       // Create new ConstantOp-ConvertOp-Operation sequences. At this moment,
       // old ConstantOp is guaranteed to have one F32->F16 convert op regardless
@@ -217,18 +220,18 @@ class QuantizeWeight : public OpRewritePattern<ConstantOp> {
   }
 };
 
-// TODO(b/264218457): Refactors the current file to parse preset quantization
+// TODO: b/264218457 - Refactors the current file to parse preset quantization
 // options and allow modular control of quantization specs.
 void QuantizeWeightPass::runOnOperation() {
   func::FuncOp func = getOperation();
   MLIRContext* ctx = func.getContext();
-
   RewritePatternSet patterns(ctx);
-  patterns.add<QuantizeWeight>(ctx);
+
+  patterns.add<QuantizeWeight>(ctx, quantization_component_spec_);
 
   FrozenRewritePatternSet frozen_patterns(std::move(patterns));
 
-  if (failed(applyPatternsAndFoldGreedily(func, frozen_patterns))) {
+  if (failed(applyPatternsGreedily(func, frozen_patterns))) {
     signalPassFailure();
   }
 }
@@ -237,8 +240,8 @@ void QuantizeWeightPass::runOnOperation() {
 
 // Creates an instance of the StableHLO dialect Quantize Weight pass.
 std::unique_ptr<OperationPass<func::FuncOp>> CreateQuantizeWeightPass(
-    ::stablehlo::quantization::QuantizationOptions quantization_options) {
-  return std::make_unique<QuantizeWeightPass>(quantization_options);
+    const QuantizationComponentSpec& quantization_component_spec) {
+  return std::make_unique<QuantizeWeightPass>(quantization_component_spec);
 }
-}  // namespace stablehlo
-}  // namespace mlir
+
+}  // namespace mlir::quant::stablehlo

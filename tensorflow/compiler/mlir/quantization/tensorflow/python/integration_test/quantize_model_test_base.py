@@ -14,6 +14,7 @@
 # ==============================================================================
 """Base test class for quantize_model Tests."""
 import os
+import re
 from typing import Collection, Iterable, Mapping, Sequence, Tuple, Optional, Union, List
 
 from absl.testing import parameterized
@@ -40,6 +41,7 @@ from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import string_ops
 from tensorflow.python.ops import variables
+from tensorflow.python.ops import while_loop as while_loop_ops
 from tensorflow.python.ops.ragged import ragged_string_ops
 from tensorflow.python.platform import test
 from tensorflow.python.platform import tf_logging as logging
@@ -106,40 +108,6 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
         )
     )
 
-  def assertSizeRatioGreaterThan(
-      self, path_a: str, path_b: str, threshold: float
-  ):
-    """Check if the size ratio of the given paths is greater than the threshold.
-
-    Args:
-      path_a: Path of a directory or a file to be the nominator of the ratio.
-      path_b: Path of a directory or a file to be the denominator of the ratio.
-      threshold: a number to compare with.
-
-    Returns:
-      True if the size ratio of path_a / path_b is greater than threshold.
-    """
-    size_a = self._get_dir_size(path_a)
-    size_b = self._get_dir_size(path_b)
-    size_ratio = size_a / size_b
-    return self.assertGreater(size_ratio, threshold)
-
-  def assertSizeRatioLessThan(self, path_a: str, path_b: str, threshold: float):
-    """Check if the size ratio of the given paths is less than the threshold.
-
-    Args:
-      path_a: Path of a directory or a file to be the nominator of the ratio.
-      path_b: Path of a directory or a file to be the denominator of the ratio.
-      threshold: a number to compare with.
-
-    Returns:
-      True if the size ratio of path_a / path_b is less than threshold.
-    """
-    size_a = self._get_dir_size(path_a)
-    size_b = self._get_dir_size(path_b)
-    size_ratio = size_a / size_b
-    return self.assertLess(size_ratio, threshold)
-
   def _is_quantized_function(self, func: function_pb2.FunctionDef) -> bool:
     """Determine whether a FunctionDef is quantized.
 
@@ -168,6 +136,7 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
       op_name: str,
       attr_name: str,
       attr_val: _AttrValType,
+      node_name: str = '',
   ) -> bool:
     """Determine whether there is a node whose operation name matches `op_name`.
 
@@ -179,15 +148,24 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
       op_name: Name of the op to match.
       attr_name: Name of the attribute of the op to match.
       attr_val: Value of the attr_name to check.
+      node_name: Name of the node to match. Accepts regex2 format.
 
     Returns:
       True if there exists a node whose name matches `op_name` and 'attr_val' if
       'attr_name' is given.
     """
+
+    def match_node_name(name):
+      if not node_name:
+        return True
+      compiled_regex = re.compile(node_name)
+      match = re.fullmatch(compiled_regex, name)
+      return match is not None
+
     return any(
         node.attr.get(attr_name) == attr_val
         for node in nodes
-        if node.op == op_name
+        if node.op == op_name and match_node_name(node.name)
     )
 
   def _contains_quantized_function_call(
@@ -222,6 +200,7 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
       op_name: str,
       attr_name: str = '',
       attr_val: _AttrValType = None,
+      node_name: str = '',
   ) -> bool:
     """Determines if the graph def contains the given op.
 
@@ -230,6 +209,7 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
       op_name: Name of the operation to find within the graph.
       attr_name: Name of the attribute of the op to match.
       attr_val: Value of the attr_name to check.
+      node_name: Name of the node to match. Accepts regex2 format.
 
     Returns:
       True if and only if the graph def contains an op named `op_name`. If
@@ -242,6 +222,7 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
         op_name=op_name,
         attr_name=attr_name,
         attr_val=attr_val,
+        node_name=node_name,
     ):
       return True
 
@@ -252,6 +233,7 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
           op_name=op_name,
           attr_name=attr_name,
           attr_val=attr_val,
+          node_name=node_name,
       ):
         return True
     return False
@@ -907,7 +889,7 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
       inputs: Mapping[str, core.Tensor],
       outputs: Mapping[str, core.Tensor],
       init_op: Optional[ops.Operation] = None,
-      assets_collection: Optional[Sequence[ops.Tensor]] = None,
+      assets_collection: Optional[Sequence[core.Symbol]] = None,
   ) -> None:
     """Saves a TF1 model.
 
@@ -948,13 +930,22 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
 
       def __init__(self):
         """Initializes a SimpleGatherAndConvModel."""
-        embedding_w_val = np.random.randn(1024, 3, 4, 3).astype('f4')
-        self.embedding_w = embedding_w_val
+        self.embedding_w = np.random.randn(1024, 3, 4, 3).astype('f4')
+        self.embedding_w = np.minimum(np.maximum(self.embedding_w, -4), 4)
+
+        self.conv_filters = np.random.uniform(
+            low=-10, high=10, size=filter_shape
+        ).astype('f4')
+
+        second_conv_filter_shape = (3, 3, filter_shape[-1], 1)
+        self.second_conv_filters = np.random.uniform(
+            low=-10, high=10, size=second_conv_filter_shape
+        ).astype('f4')
 
       @def_function.function(
           input_signature=[
               tensor_spec.TensorSpec(
-                  shape=[1], dtype=input_type, name='input_tensor'
+                  shape=[None], dtype=input_type, name='input_tensor'
               )
           ]
       )
@@ -967,20 +958,13 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
         Returns:
           A map of: output key -> output result.
         """
-        conv_filters = np.random.uniform(
-            low=-10, high=10, size=filter_shape
-        ).astype('f4')
-        second_conv_filter_shape = (3, 3, filter_shape[-1], 1)
-        second_conv_filters = np.random.uniform(
-            low=-10, high=10, size=second_conv_filter_shape
-        ).astype('f4')
 
         out = array_ops.gather_v2(self.embedding_w, input_tensor)
 
         # One pure conv
         out = nn_ops.conv2d(
             out,
-            conv_filters,
+            self.conv_filters,
             strides=(1, 1, 2, 1),
             dilations=(1, 1, 1, 1),
             padding='SAME',
@@ -993,12 +977,14 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
               out, min=-0.1, max=0.2, num_bits=8, narrow_range=False
           )
           second_conv_filters = array_ops.fake_quant_with_min_max_args(
-              second_conv_filters,
+              self.second_conv_filters,
               min=-0.1,
               max=0.2,
               num_bits=8,
               narrow_range=True,
           )
+        else:
+          second_conv_filters = self.second_conv_filters
 
         out = nn_ops.conv2d(
             out,
@@ -1110,6 +1096,25 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
     class DepthwiseConvModel(module.Module):
       """A simple model with a single depthwise conv2d, bias and relu."""
 
+      def __init__(self):
+        self.out_channel_size = filter_shape[2] * filter_shape[3]
+
+        # This ensures filters will have different value range per out channel
+        self.filters = np.stack(
+            [
+                np.random.uniform(
+                    low=-(i + 1), high=(i + 1), size=filter_shape[:-2]
+                ).astype('f4')
+                for i in range(self.out_channel_size)
+            ],
+            axis=-1,
+        )
+        self.filters = self.filters.reshape(filter_shape)
+
+        self.bias = np.random.uniform(
+            low=0, high=10, size=(self.out_channel_size)
+        ).astype('f4')
+
       @def_function.function(
           input_signature=[
               tensor_spec.TensorSpec(shape=input_shape, dtype=dtypes.float32)
@@ -1126,25 +1131,19 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
         Returns:
           A map of: output key -> output result.
         """
-        filters = np.random.uniform(low=-10, high=10, size=filter_shape).astype(
-            'f4'
-        )
-        out_channel_size = filter_shape[2] * filter_shape[3]
-        bias = np.random.uniform(
-            low=0, high=10, size=(out_channel_size)
-        ).astype('f4')
-        scale, offset = [1.0] * out_channel_size, [0.5] * out_channel_size
+        scale = [1.0] * self.out_channel_size
+        offset = [0.5] * self.out_channel_size
         mean, variance = scale, offset
         out = nn_ops.depthwise_conv2d_native(
             input_tensor,
-            filters,
+            self.filters,
             strides=[1, 2, 2, 1],
             dilations=[1, 1, 1, 1],
             padding='SAME',
             data_format='NHWC',
         )
         if has_bias:
-          out = nn_ops.bias_add(out, bias)
+          out = nn_ops.bias_add(out, self.bias)
         if has_batch_norm:
           # Fusing is supported for non-training case.
           out, _, _, _, _, _ = nn_ops.fused_batch_norm_v3(
@@ -1170,6 +1169,24 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
     class ConvModel(module.Module):
       """A simple model with a single conv2d, bias and relu."""
 
+      def __init__(self):
+        self.out_channel_size = filter_shape[-1]
+
+        # This ensures filters will have different value range per out channel
+        self.filters = np.stack(
+            [
+                np.random.uniform(
+                    low=-(i + 1), high=(i + 1), size=filter_shape[:-1]
+                ).astype('f4')
+                for i in range(self.out_channel_size)
+            ],
+            axis=-1,
+        )
+
+        self.bias = np.random.uniform(
+            low=0, high=10, size=(self.out_channel_size)
+        ).astype('f4')
+
       @def_function.function(
           input_signature=[
               tensor_spec.TensorSpec(shape=input_shape, dtype=dtypes.float32)
@@ -1184,25 +1201,19 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
         Returns:
           A map of: output key -> output result.
         """
-        filters = np.random.uniform(low=-10, high=10, size=filter_shape).astype(
-            'f4'
-        )
-        out_channel_size = filter_shape[-1]
-        bias = np.random.uniform(
-            low=0, high=10, size=(out_channel_size)
-        ).astype('f4')
-        scale, offset = [1.0] * out_channel_size, [0.5] * out_channel_size
+        scale = [1.0] * self.out_channel_size
+        offset = [0.5] * self.out_channel_size
         mean, variance = scale, offset
         out = nn_ops.conv2d(
             input_tensor,
-            filters,
-            strides=[1, 1, 2, 1],
-            dilations=[1, 1, 1, 1],
-            padding='SAME',
+            self.filters,
+            strides=strides,
+            dilations=dilations,
+            padding=padding,
             data_format='NHWC',
         )
         if has_bias:
-          out = nn_ops.bias_add(out, bias, data_format='NHWC')
+          out = nn_ops.bias_add(out, self.bias, data_format='NHWC')
         if has_batch_norm:
           # Fusing is supported for non-training case.
           out, _, _, _, _, _ = nn_ops.fused_batch_norm_v3(
@@ -1274,7 +1285,7 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
         Returns:
           A map of: output key -> output result.
         """
-        out = math_ops.matmul(input_tensor, self.filters)
+        out = math_ops.matmul(input_tensor, self.filters, name='sample/matmul')
 
         if self.has_reshape():
           input_shape = input_tensor.shape
@@ -1302,7 +1313,7 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
 
     # Verify that when bias_size is not None, has_bias should be True.
     # And if bias_size is None, has_bias should be False using XNOR
-    assert (not ((bias_size is not None) ^ has_bias))
+    assert not ((bias_size is not None) ^ has_bias)
 
     # Verify that bias size is correct
     if bias_size:
@@ -1314,82 +1325,6 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
         model,
         saved_model_path,
         signatures=model.matmul.get_concrete_function(
-            tensor_spec.TensorSpec(
-                shape=input_shape, dtype=dtypes.float32, name='input_tensor'
-            )
-        ),
-    )
-    return model
-
-  def _create_einsum_model(
-      self,
-      saved_model_path: str,
-      equation: str,
-      input_shape: Sequence[int],
-      weight_shape: Sequence[int],
-      bias_shape: Optional[Sequence[int]] = None,
-      activation_fn: Optional[ops.Operation] = None,
-  ) -> module.Module:
-    class EinsumModel(module.Module):
-      """A simple model with a single einsum.
-
-      Bias and activation function are optional.
-      """
-
-      def __init__(
-          self,
-          equation: str,
-          weight_shape: Sequence[int],
-          bias_shape: Optional[Sequence[int]] = None,
-          activation_fn: Optional[ops.Operation] = None,
-      ) -> None:
-        """Initializes a EinsumModel.
-
-        Args:
-          equation: a string describing the contraction.
-          weight_shape: Shape of the weight tensor.
-          bias_shape: Shape of the bias. This is not always 1D so Einsum ops
-            usually use Add op instead of BiasAdd.
-          activation_fn: The activation function to be used. No activation
-            function if None.
-        """
-        self.equation = equation
-        self.activation_fn = activation_fn
-        self.weight = np.random.uniform(low=-1.0, high=1.0, size=weight_shape)
-        self.bias = (
-            np.random.uniform(low=-1.0, high=1.0, size=bias_shape)
-            if bias_shape is not None
-            else None
-        )
-
-      @def_function.function
-      def einsum(self, input_tensor: core.Tensor) -> Mapping[str, core.Tensor]:
-        """Evaluates the Einstein summation convention.
-
-        Depending on self.has_bias and self.activation_fn, it may add a bias
-        term or go through the activaction function.
-
-        Args:
-          input_tensor: Input tensor to einsum with the weight.
-
-        Returns:
-          A map of: output key -> output result.
-        """
-        out = tensorflow.einsum(self.equation, input_tensor, self.weight)
-
-        if self.bias is not None:
-          out = out + self.bias
-
-        if self.activation_fn is not None:
-          out = self.activation_fn(out)
-
-        return {'output': out}
-
-    model = EinsumModel(equation, weight_shape, bias_shape, activation_fn)
-    saved_model_save.save(
-        model,
-        saved_model_path,
-        signatures=model.einsum.get_concrete_function(
             tensor_spec.TensorSpec(
                 shape=input_shape, dtype=dtypes.float32, name='input_tensor'
             )
@@ -1424,7 +1359,7 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
     out_labels = equation[arrow_pos + 1 :]
 
     # 2. Create sample shapes.
-    label_to_size = {'a': 2, 'b': 3, 'c': 4, 'd': 5, 'e': 6}
+    label_to_size = {'a': 4, 'b': 32, 'c': 64, 'd': 128, 'e': 8}
     x_shape = [label_to_size.get(x_label) for x_label in x_labels]
     y_shape = [label_to_size.get(y_label) for y_label in y_labels]
     bias_shape = None
@@ -1449,7 +1384,7 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
       ]
     return x_shape, y_shape, bias_shape, x_signature, y_signature
 
-  def _create_einsum_model_with_fake_quant(
+  def _create_einsum_model(
       self,
       equation: str,
       y_shape: Sequence[int],
@@ -1457,9 +1392,10 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
       y_signature: Sequence[Optional[int]],
       bias_shape: Optional[Sequence[int]] = None,
       activation_fn: Optional[ops.Operation] = None,
+      is_qat_model: bool = False,
   ) -> module.Module:
     class EinsumModel(module.Module):
-      """Einsum class with fakequants."""
+      """Einsum class."""
 
       def __init__(self):
         self._bias = None
@@ -1498,33 +1434,35 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
         return self._einsum(x, y)
 
       def _einsum(self, x, y):
-        x = array_ops.fake_quant_with_min_max_vars(
-            x,
-            min=ops.convert_to_tensor(self._min[0]),
-            max=ops.convert_to_tensor(self._max[0]),
-            num_bits=8,
-            narrow_range=False,
-        )
-        y = array_ops.fake_quant_with_min_max_vars(
-            y,
-            min=ops.convert_to_tensor(self._min[1]),
-            max=ops.convert_to_tensor(self._max[1]),
-            num_bits=8,
-            narrow_range=False,
-        )
+        if is_qat_model:
+          x = array_ops.fake_quant_with_min_max_vars(
+              x,
+              min=ops.convert_to_tensor(self._min[0]),
+              max=ops.convert_to_tensor(self._max[0]),
+              num_bits=8,
+              narrow_range=False,
+          )
+          y = array_ops.fake_quant_with_min_max_vars(
+              y,
+              min=ops.convert_to_tensor(self._min[1]),
+              max=ops.convert_to_tensor(self._max[1]),
+              num_bits=8,
+              narrow_range=False,
+          )
 
         out = tensorflow.einsum(equation, x, y)
         if self._bias is not None:
           out = nn_ops.bias_add(out, self._bias)
         if activation_fn is not None:
           out = activation_fn(out)
-        out = array_ops.fake_quant_with_min_max_vars(
-            out,
-            min=ops.convert_to_tensor(self._min[2]),
-            max=ops.convert_to_tensor(self._max[2]),
-            num_bits=8,
-            narrow_range=False,
-        )
+        if is_qat_model:
+          out = array_ops.fake_quant_with_min_max_vars(
+              out,
+              min=ops.convert_to_tensor(self._min[2]),
+              max=ops.convert_to_tensor(self._max[2]),
+              num_bits=8,
+              narrow_range=False,
+          )
         return {'output': out}
 
     return EinsumModel()
@@ -1580,3 +1518,37 @@ class QuantizedModelTest(test.TestCase, parameterized.TestCase):
       )
 
     return in_placeholder
+
+  def _create_while_model(self, input_shape: Sequence[int] = (1, 32, 32, 512)):
+    class WhileModel(module.Module):
+      """A model with a while op."""
+
+      def __init__(self):
+        w_shape = [3, 3] + [input_shape[-1], input_shape[-1]]
+        self.w = np.random.uniform(low=-2, high=2, size=w_shape).astype('f4')
+
+      @def_function.function
+      def condition(self, x, w):
+        return math_ops.reduce_sum(x, keepdims=False) < 100
+
+      @def_function.function
+      def body(self, x, w):
+        z = nn_ops.conv2d(x, w, padding='SAME')
+        return z, w
+
+      @def_function.function(
+          input_signature=[
+              tensor_spec.TensorSpec(
+                  shape=input_shape, dtype=dtypes.float32, name='input_tensor'
+              )
+          ]
+      )
+      def main(self, x):
+        x1 = nn_ops.conv2d(x, self.w, padding='SAME')
+        x2, _ = while_loop_ops.while_loop(
+            self.condition, self.body, [x, self.w]
+        )
+        result = x1 + x2
+        return {'output': result}
+
+    return WhileModel()

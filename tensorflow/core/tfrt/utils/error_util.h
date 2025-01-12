@@ -15,6 +15,8 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_TFRT_UTILS_ERROR_UTIL_H_
 #define TENSORFLOW_CORE_TFRT_UTILS_ERROR_UTIL_H_
 
+#include <string>
+
 #include "tensorflow/core/platform/status.h"
 #include "tfrt/support/error_util.h"  // from @tf_runtime
 #include "tfrt/support/forward_decls.h"  // from @tf_runtime
@@ -22,14 +24,13 @@ limitations under the License.
 namespace tfrt {
 class DecodedDiagnostic;
 
-tfrt::ErrorCode ConvertTfErrorCodeToTfrtErrorCode(
-    const tensorflow::Status& status);
+tfrt::ErrorCode ConvertTfErrorCodeToTfrtErrorCode(const absl::Status& status);
 
-tensorflow::Status CreateTfErrorStatus(const DecodedDiagnostic& error);
+absl::Status CreateTfErrorStatus(const DecodedDiagnostic& error);
 
-tensorflow::Status ToTfStatus(const AsyncValue* av);
+absl::Status ToTfStatus(const AsyncValue* av);
 
-inline std::string MakeStatusString(tensorflow::Status status) {
+inline std::string MakeStatusString(absl::Status status) {
   switch (static_cast<absl::StatusCode>(status.code())) {
     case absl::StatusCode::kOk:
       return "OK";
@@ -70,11 +71,9 @@ inline std::string MakeStatusString(tensorflow::Status status) {
   }
 }
 
-inline llvm::Error MakeStatusError(tensorflow::Status status) {
+inline llvm::Error MakeStatusError(absl::Status status) {
   return MakeStringError(MakeStatusString(status));
 }
-
-absl::Status AbslStatusFromTfStatus(tensorflow::Status status);
 
 }  // namespace tfrt
 

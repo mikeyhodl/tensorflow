@@ -15,9 +15,13 @@ limitations under the License.
 
 #include "tensorflow/core/transforms/func_to_graph/pass.h"
 
+#include <memory>
+
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/SymbolTable.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/Diagnostics.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
+#include "tensorflow/core/ir/dialect.h"
 #include "tensorflow/core/ir/ops.h"
 #include "tensorflow/core/transforms/func_to_graph/func_to_graph.h"
 

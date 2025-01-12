@@ -19,11 +19,11 @@ limitations under the License.
 #include <ostream>
 #include <string>
 
+#include "xla/tsl/profiler/rpc/client/save_profile.h"
 #include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/profiler/protobuf/xplane.pb.h"
-#include "tensorflow/tsl/profiler/protobuf/profiler_service.pb.h"
-#include "tensorflow/tsl/profiler/rpc/client/save_profile.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
 
 namespace tensorflow {
 namespace profiler {

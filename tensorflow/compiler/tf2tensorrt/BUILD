@@ -3,7 +3,14 @@
 #   and provide TensorRT operators and converter package.
 #   APIs are meant to change over time.
 
-load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
+load("@local_config_tensorrt//:build_defs.bzl", "if_tensorrt")
+load(
+    "@local_xla//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "cuda_rpath_flags",
+)
+load("//tensorflow:strict.default.bzl", "py_strict_library")
+
+# Placeholder: load py_proto_library
 load(
     "//tensorflow:tensorflow.bzl",
     "VERSION",
@@ -13,25 +20,24 @@ load(
     "tf_custom_op_library_additional_deps",
     "tf_gen_op_wrapper_py",
 )
-load("//tensorflow:tensorflow.default.bzl", "pybind_extension", "tf_cuda_cc_test", "tf_custom_op_py_library", "tf_gen_op_libs")
+load("//tensorflow:tensorflow.default.bzl", "pybind_extension", "tf_cuda_cc_test", "tf_custom_op_py_strict_library", "tf_gen_op_libs")
 load(
     "//tensorflow/core/platform:build_config.bzl",
     "tf_additional_all_protos",
     "tf_proto_library",
 )
-load("@local_config_tensorrt//:build_defs.bzl", "if_tensorrt")
 
 # Platform specific build config
 load(
     "//tensorflow/core/platform:build_config_root.bzl",
     "if_static",
 )
+load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//visibility:public"],
     features = [
-        "-layering_check",
         "-parse_headers",
     ],
     licenses = ["notice"],
@@ -65,11 +71,12 @@ cc_library(
         "stub/nvinfer_stub.cc",
         "stub/nvinfer_plugin_stub.cc",
     ]),
+    linkopts = if_tensorrt(cuda_rpath_flags("tensorrt")),
     textual_hdrs = glob(["stub/*.inc"]),
     deps = if_tensorrt([
         "@local_config_tensorrt//:tensorrt_headers",
         "//tensorflow/core:lib",
-        "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
+        "@local_tsl//tsl/platform:dso_loader",
     ]),
 )
 
@@ -92,19 +99,22 @@ tf_cuda_cc_test(
         ":use_efficient_nms_plugin": ["-DTF_TRT_USE_EFFICIENT_NMS_PLUGIN=1"],
         "//conditions:default": [],
     }),
+    features = ["-layering_check"],
     tags = [
         "no_cuda_on_cpu_tap",
         "no_windows",
         "nomac",
+        # TODO(b/303453873): Re-enable test once TensorRT has been updated
+        "notap",
     ],
     deps = [
         ":trt_logging",
         ":utils",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_init",
         "//tensorflow/core:lib",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core/platform:stream_executor",
+        "@local_xla//xla/stream_executor/gpu:gpu_init",
     ] + if_tensorrt([
         ":tensorrt_lib",
     ]) + select({
@@ -120,6 +130,7 @@ cc_library(
         "trt_convert_api.h",
     ],
     copts = tf_copts(),
+    features = ["-layering_check"],
     deps = [
         ":trt_parameters",
         ":trt_resources",
@@ -144,10 +155,13 @@ tf_cuda_cc_test(
     name = "trt_convert_api_test",
     size = "small",
     srcs = ["trt_convert_api_test.cc"],
+    features = ["-layering_check"],
     tags = [
         "no_cuda_on_cpu_tap",
         "no_windows",
         "nomac",
+        # TODO(b/303453873): Re-enable test once TensorRT has been updated
+        "notap",
     ],
     deps = [
         ":common_utils",
@@ -193,6 +207,7 @@ cc_library(
         "common/utils.h",
     ],
     copts = tf_copts(),
+    features = ["-layering_check"],
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core/platform:logging",
@@ -208,6 +223,7 @@ cc_library(
         "utils/trt_testutils.h",
     ],
     copts = tf_copts(),
+    features = ["-layering_check"],
     visibility = ["//visibility:private"],
     deps = [
         ":trt_conversion",
@@ -223,10 +239,13 @@ tf_cuda_cc_test(
     name = "testutils_test",
     size = "small",
     srcs = ["utils/trt_testutils_test.cc"],
+    features = ["-layering_check"],
     tags = [
         "no_cuda_on_cpu_tap",
         "no_windows",
         "nomac",
+        # TODO(b/303453873): Re-enable test once TensorRT has been updated
+        "notap",
     ],
     deps = [
         ":testutils",
@@ -245,6 +264,7 @@ cc_library(
         "kernels/trt_engine_op.cc",
     ],
     copts = tf_copts(),
+    features = ["-layering_check"],
     visibility = ["//visibility:public"],
     deps = [
         ":common_utils",
@@ -278,6 +298,7 @@ cc_library(
     name = "trt_engine_resource_op_kernels",
     srcs = ["kernels/trt_engine_resource_ops.cc"],
     copts = tf_copts(),
+    features = ["-layering_check"],
     visibility = ["//tensorflow/core:__subpackages__"],
     deps = [
         ":trt_allocator",
@@ -305,6 +326,8 @@ tf_cuda_cc_test(
         "no_cuda_on_cpu_tap",
         "no_windows",
         "nomac",
+        # TODO(b/303453873): Re-enable test once TensorRT has been updated
+        "notap",
     ],
     deps = [
         ":common_utils",
@@ -336,10 +359,13 @@ tf_cuda_cc_test(
     name = "trt_engine_op_test",
     size = "small",
     srcs = ["kernels/trt_engine_op_test.cc"],
+    features = ["-layering_check"],
     tags = [
         "no_cuda_on_cpu_tap",
         "no_windows",
         "nomac",
+        # TODO(b/303453873): Re-enable test once TensorRT has been updated
+        "notap",
     ],
     deps = [
         ":testutils",
@@ -361,23 +387,21 @@ tf_cuda_cc_test(
         "//tensorflow/core/kernels:array",
         "//tensorflow/core/kernels:function_ops",
         "//tensorflow/core/kernels:ops_testutil",
-        "//third_party/eigen3",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
+        "@eigen_archive//:eigen3",
     ] + if_tensorrt([
         "@local_config_cuda//cuda:cuda_headers",
     ]),
 )
 
-tf_gen_op_libs(
-    op_lib_names = [
-        "trt_engine_op",
-        "get_calibration_data_op",
-        "trt_engine_resource_ops",
-    ],
-)
+tf_gen_op_libs(op_lib_names = [
+    "trt_engine_op",
+    "get_calibration_data_op",
+    "trt_engine_resource_ops",
+])
 
 cc_library(
     name = "trt_op_libs",
@@ -399,6 +423,7 @@ tf_cuda_library(
         "utils/trt_execution_context.h",
         "utils/trt_shape_optimization_profiles.h",
     ],
+    features = ["-layering_check"],
     deps = [
         ":common_utils",
         ":trt_allocator",
@@ -419,6 +444,7 @@ tf_cuda_library(
     name = "trt_logging",
     srcs = ["utils/trt_logger.cc"],
     hdrs = ["utils/trt_logger.h"],
+    features = ["-layering_check"],
     visibility = ["//visibility:public"],
     deps = [
         ":common_utils",
@@ -431,22 +457,28 @@ tf_cuda_library(
 
 tf_gen_op_wrapper_py(
     name = "trt_ops",
+    extra_py_deps = [
+        "//tensorflow/python:pywrap_tfe",
+        "//tensorflow/python/util:dispatch",
+        "//tensorflow/python/util:deprecation",
+        "//tensorflow/python/util:tf_export",
+    ],
+    py_lib_rule = py_strict_library,
     deps = [
         ":trt_engine_resource_ops_op_lib",
         ":trt_op_libs",
     ],
 )
 
-tf_custom_op_py_library(
+tf_custom_op_py_strict_library(
     name = "trt_ops_loader",
     srcs_version = "PY3",
     deps = [
         ":_pywrap_py_utils",
         ":trt_ops",
-        "//tensorflow/python:errors",
-        "//tensorflow/python:framework_for_generated_wrappers",
-        "//tensorflow/python:platform",
-        "//tensorflow/python:resources",
+        "//tensorflow/python/framework:errors",
+        "//tensorflow/python/framework:for_generated_wrappers",
+        "//tensorflow/python/ops:resources",
     ],
 )
 
@@ -477,6 +509,7 @@ tf_cuda_library(
         "utils/trt_shape_optimization_profiles.h",
         "utils/trt_tensor_proxy.h",
     ],
+    features = ["-layering_check"],
     deps = [
         ":common_utils",
         ":trt_allocator",
@@ -496,6 +529,7 @@ tf_cuda_library(
     name = "trt_allocator",
     srcs = ["utils/trt_allocator.cc"],
     hdrs = ["utils/trt_allocator.h"],
+    features = ["-layering_check"],
     deps = [
         "//tensorflow/core:framework_headers_lib",
         "//tensorflow/core:framework_lite",
@@ -537,10 +571,13 @@ tf_cuda_cc_test(
     name = "trt_shape_optimization_profiles_test",
     size = "small",
     srcs = ["utils/trt_shape_optimization_profiles_test.cc"],
+    features = ["-layering_check"],
     tags = [
         "no_cuda_on_cpu_tap",
         "no_windows",
         "nomac",
+        # TODO(b/303453873): Re-enable test once TensorRT has been updated
+        "notap",
     ],
     deps = [
         ":trt_resources",
@@ -556,6 +593,7 @@ tf_cuda_library(
         "convert/logger_registry.h",
     ],
     copts = tf_copts(),
+    features = ["-layering_check"],
     deps = [
         "//tensorflow/core:lib",
         "@com_google_absl//absl/strings",
@@ -569,6 +607,7 @@ tf_cuda_library(
         "convert/weights.h",
     ],
     copts = tf_copts(),
+    features = ["-layering_check"],
     deps = [
         ":utils",
         "//tensorflow/core:framework",
@@ -600,6 +639,7 @@ tf_cuda_library(
     hdrs = [
         "convert/op_converter_registry.h",
     ],
+    features = ["-layering_check"],
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         ":op_converter",
@@ -631,6 +671,7 @@ tf_cuda_cc_test(
     name = "op_converter_registry_test",
     size = "small",
     srcs = ["convert/op_converter_registry_test.cc"],
+    features = ["-layering_check"],
     tags = [
         "no_windows",
         "nomac",
@@ -650,6 +691,7 @@ tf_cuda_library(
     hdrs = [
         "convert/algorithm_selector.h",
     ],
+    features = ["-layering_check"],
     deps = [":common_utils"] + if_tensorrt([":tensorrt_lib"]),
 )
 
@@ -658,6 +700,7 @@ tf_cuda_cc_test(
     srcs = [
         "convert/algorithm_selector_test.cc",
     ],
+    features = ["-layering_check"],
     deps = [
         ":algorithm_selector",
         "//tensorflow/core:test",
@@ -700,6 +743,7 @@ tf_cuda_library(
         ":use_efficient_nms_plugin": ["-DTF_TRT_USE_EFFICIENT_NMS_PLUGIN=1"],
         "//conditions:default": [],
     }),
+    features = ["-layering_check"],
     deps = [
         ":algorithm_selector",
         ":common_utils",
@@ -754,6 +798,8 @@ tf_cuda_cc_test(
         "no_cuda_on_cpu_tap",
         "no_windows",
         "nomac",
+        # TODO(b/303453873): Re-enable test once TensorRT has been updated
+        "notap",
     ],
     deps = [
         ":testutils",
@@ -785,10 +831,13 @@ tf_cuda_cc_test(
         "convert/convert_nodes_test.cc",
         "convert/op_converter_test.cc",
     ],
+    features = ["-layering_check"],
     tags = [
         "no_cuda_on_cpu_tap",
         "no_windows",
         "nomac",
+        # TODO(b/303453873): Re-enable test once TensorRT has been updated
+        "notap",
     ],
     deps = [
         ":testutils",
@@ -828,10 +877,12 @@ tf_cuda_cc_test(
     srcs = [
         "convert/ops/quantization_ops_test.cc",
     ],
+    features = ["-layering_check"],
     tags = [
         "no_cuda_on_cpu_tap",
         "no_windows",
         "nomac",
+        "notap",  # Fails w/ tensorrt 8.x
     ],
     deps = [
         ":testutils",
@@ -921,6 +972,7 @@ tf_cuda_cc_test(
     name = "segment_test",
     size = "small",
     srcs = ["segment/segment_test.cc"],
+    features = ["-layering_check"],
     tags = [
         "no_cuda_on_cpu_tap",
         "no_windows",
@@ -943,6 +995,7 @@ tf_cuda_library(
     name = "trt_plugins",
     srcs = ["plugin/trt_plugin.cc"],
     hdrs = ["plugin/trt_plugin.h"],
+    features = ["-layering_check"],
     deps = [
         "//tensorflow/core:framework_lite",
         "//tensorflow/core:lib_proto_parsing",
@@ -962,6 +1015,7 @@ cc_library(
         "utils/trt_tensor_proxy.h",
     ],
     copts = tf_copts(),
+    features = ["-layering_check"],
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:graph",
@@ -975,7 +1029,6 @@ cc_library(
 tf_proto_library(
     name = "trt_engine_instance_proto",
     srcs = ["utils/trt_engine_instance.proto"],
-    cc_api_version = 2,
     protodeps = tf_additional_all_protos(),
 )
 
@@ -991,7 +1044,6 @@ tf_cuda_library(
         ":common_utils",
         ":tensorrt_lib",
         ":op_converter_registry",
-        "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
     ]),
 )
 
@@ -1003,6 +1055,10 @@ pybind_extension(
         "//conditions:default": ["//tensorflow:libtensorflow_framework.so.%s" % VERSION],
         "//tensorflow:windows": [],
     }),
+    enable_stub_generation = True,
+    pytype_srcs = [
+        "_pywrap_py_utils.pyi",
+    ],
     static_deps = [
         "@bazel_tools//:__subpackages__",
         "@boringssl//:__subpackages__",
@@ -1012,7 +1068,6 @@ pybind_extension(
         "@com_google_protobuf//:__subpackages__",
         "@com_googlesource_code_re2//:__subpackages__",
         "@curl//:__subpackages__",
-        "@double_conversion//:__subpackages__",
         "@eigen_archive//:__subpackages__",
         "@farmhash_archive//:__subpackages__",
         "@fft2d//:__subpackages__",
@@ -1027,21 +1082,21 @@ pybind_extension(
         "@llvm_zlib//:__subpackages__",
         "@local_config_cuda//:__subpackages__",
         "@local_config_git//:__subpackages__",
-        "@local_config_python//:__subpackages__",
         "@local_config_rocm//:__subpackages__",
         "@local_config_tensorrt//:__subpackages__",
         "@local_execution_config_platform//:__subpackages__",
-        "@nsync//:__subpackages__",
+        "@ml_dtypes//:__subpackages__",
         "@platforms//:__subpackages__",
         "@pybind11//:__subpackages__",
         "@snappy//:__subpackages__",
         "//:__subpackages__",
         "@zlib//:__subpackages__",
+        "@local_tsl//tsl:__subpackages__",
+        "@local_xla//xla:__subpackages__",
     ],
     deps = [
         ":common_utils",
         ":py_utils",
-        "//tensorflow/compiler/xla/stream_executor",
         "//tensorflow/core/platform:env",
         "//tensorflow/core/platform:logging",
         "//tensorflow/core/platform:status",
@@ -1053,7 +1108,6 @@ pybind_extension(
 # py_proto_library(
 #     name = "trt_engine_instance_proto_py_pb2",
 #     has_services = 0,
-#     api_version = 2,
 #     deps = [":trt_engine_instance_proto"],
 # )
 # copybara:uncomment_end

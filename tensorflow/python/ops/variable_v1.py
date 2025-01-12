@@ -15,20 +15,10 @@
 """VariableV1 class."""
 
 from tensorflow.python.framework import ops
-from tensorflow.python.ops import cond
-from tensorflow.python.ops import state_ops
+from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import variables
 from tensorflow.python.util import tf_should_use
 from tensorflow.python.util.tf_export import tf_export
-
-
-_variable_from_proto_fn = None
-
-
-def set_variable_from_proto_fn(variable_from_proto_fn):
-  """Set the variable class that variable proto defs will be converted to."""
-  global _variable_from_proto_fn
-  _variable_from_proto_fn = variable_from_proto_fn
 
 
 @tf_export(v1=["is_variable_initialized"])
@@ -43,7 +33,19 @@ def is_variable_initialized(variable):
     Returns a scalar boolean Tensor, `True` if the variable has been
     initialized, `False` otherwise.
   """
+  # variable_v1.py is imported at the top-level internally at TF1 import time,
+  # so the import time for this file should be reduced as much as possible.
+  # Thus import state_ops only when it is used.
+  from tensorflow.python.ops import state_ops  # pylint: disable=g-import-not-at-top
   return state_ops.is_variable_initialized(variable)
+
+
+def default_variable_creator(next_creator=None, **kwds):
+  from tensorflow.python.ops import ref_variable  # pylint: disable=g-import-not-at-top
+
+  return ref_variable.default_variable_creator(
+      next_creator=next_creator, **kwds
+  )
 
 
 @tf_export(v1=["Variable"])
@@ -256,6 +258,10 @@ class VariableV1(variables.Variable):
   SaveSliceInfo = variables.Variable.SaveSliceInfo
 
   def initialized_value(self):
+    # variable_v1.py is imported at the top-level internally at TF1 import time,
+    # so the import time for this file should be reduced as much as possible.
+    # Thus import cond only when it is used.
+    from tensorflow.python.ops import cond  # pylint: disable=g-import-not-at-top
     with ops.init_scope():
       return cond.cond(
           is_variable_initialized(self), self.read_value,
@@ -263,7 +269,8 @@ class VariableV1(variables.Variable):
 
   @staticmethod
   def from_proto(variable_def, import_scope=None):
-    return _variable_from_proto_fn(
+    from tensorflow.python.ops import ref_variable  # pylint: disable=g-import-not-at-top
+    return ref_variable.RefVariable(
         variable_def=variable_def, import_scope=import_scope)
 
   @classmethod
@@ -290,8 +297,7 @@ class VariableV1(variables.Variable):
     """VariableV1 class getter. Useful to force the signature."""
     if cls is not VariableV1:
       return None
-    previous_getter = lambda **kwargs: variables.default_variable_creator(
-        None, **kwargs)
+    previous_getter = lambda **kwargs: default_variable_creator(None, **kwargs)
     for _, getter in ops.get_default_graph()._variable_creator_stack:  # pylint: disable=protected-access
       previous_getter = variables._make_getter(getter, previous_getter)  # pylint: disable=protected-access
 
@@ -316,3 +322,5 @@ class VariableV1(variables.Variable):
         collections=collections,
         use_resource=use_resource,
     )
+
+variable_scope.set_variable_v1(VariableV1)

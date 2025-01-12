@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -25,22 +26,26 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/macros.h"
 #include "absl/container/fixed_array.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
 #include "absl/time/time.h"
+#include "absl/types/optional.h"
+#include "xla/tsl/profiler/utils/timespan.h"
 #include "tensorflow/core/profiler/convert/trace_viewer/trace_events_util.h"
 #include "tensorflow/core/profiler/convert/trace_viewer/trace_viewer_color.h"
 #include "tensorflow/core/profiler/lib/context_types.h"
 #include "tensorflow/core/profiler/protobuf/task.pb.h"
 #include "tensorflow/core/profiler/protobuf/trace_events.pb.h"
 #include "tensorflow/core/profiler/protobuf/trace_events_raw.pb.h"
-#include "tensorflow/core/profiler/utils/timespan.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/context_types.h"
 
 namespace tensorflow {
 namespace profiler {
@@ -64,6 +69,8 @@ struct JsonTraceOptions {
   TraceEventsColorerInterface* colorer = nullptr;
 
   bool generate_stack_frames = true;
+  bool use_new_backend = false;
+  std::string code_link;
 };
 
 // Counts generated JSON events by type.
@@ -130,12 +137,12 @@ std::string JsonEscape(absl::string_view raw);
 
 std::string ProtoString(const tsl::protobuf::Message& pb);
 
-template <typename RawData, typename IOBuffer>
-void WriteTpuData(const RawData& data, JsonSeparator<IOBuffer>* separator,
+template <typename RawDataType, typename IOBuffer>
+void WriteTpuData(const RawDataType& data, JsonSeparator<IOBuffer>* separator,
                   IOBuffer* output) {}
 
 // Writes JSON events from a TraceEvent.
-template <typename IOBuffer, typename RawData>
+template <typename IOBuffer, typename RawDataType>
 class JsonEventWriter {
  public:
   JsonEventWriter(const TraceEventsColorerInterface* colorer,
@@ -157,7 +164,7 @@ class JsonEventWriter {
         event.has_name_ref() ? trace_.name_table().at(event.name_ref())
                              : event.name();
     output_->Append(R"(,"name":)", JsonEscape(event_name));
-    Timespan span = EventSpan(event);
+    tsl::profiler::Timespan span = EventSpan(event);
     // "%.17g" is the default double format in proto2::util::JsonFormat.
     absl::Format(output_, R"(,"ts":%.17g)", PicosToMicros(span.begin_ps()));
     JsonEventCounter::EventType event_type = JsonEventCounter::kCounterEvent;
@@ -179,15 +186,17 @@ class JsonEventWriter {
       if (event_type == JsonEventCounter::kCompleteEventWithFlow) {
         output_->Append(R"(,"bind_id":)", event.flow_id());
         if (event.has_flow_category()) {
-          ContextType type = GetSafeContextType(event.flow_category());
-          if (type != ContextType::kGeneric && type != ContextType::kLegacy) {
-            const char* category = GetContextTypeString(type);
+          tsl::profiler::ContextType type =
+              tsl::profiler::GetSafeContextType(event.flow_category());
+          if (type != tsl::profiler::ContextType::kGeneric &&
+              type != tsl::profiler::ContextType::kLegacy) {
+            const char* category = tsl::profiler::GetContextTypeString(type);
             output_->Append(R"(,"cat":")", category, R"(")");
           }
         }
         switch (event.flow_entry_type()) {
           case TraceEvent::FLOW_NONE:
-            // The caller prevents this case from happenning.
+            // The caller prevents this case from happening.
             break;
           case TraceEvent::FLOW_START:
             output_->Append(R"(,"flow_out":true)");
@@ -209,13 +218,14 @@ class JsonEventWriter {
       } else {  // async events
         output_->Append(R"(,"id":)", event.flow_id());
         if (event.has_flow_category()) {
-          ContextType type = GetSafeContextType(event.flow_category());
-          const char* category = GetContextTypeString(type);
+          tsl::profiler::ContextType type =
+              tsl::profiler::GetSafeContextType(event.flow_category());
+          const char* category = tsl::profiler::GetContextTypeString(type);
           output_->Append(R"(,"cat":")", category, R"(")");
         }
         switch (event.flow_entry_type()) {
           case TraceEvent::FLOW_NONE:
-            // The caller prevents this case from happenning.
+            // The caller prevents this case from happening.
             break;
           case TraceEvent::FLOW_START:
             output_->Append(R"(,"ph":"b")");
@@ -260,20 +270,20 @@ class JsonEventWriter {
       output_->Append(R"("group_id":)", event.group_id());
     }
     if (event.has_raw_data()) {
-      RawData data;
+      RawDataType data;
       data.ParseFromString(event.raw_data());
       switch (data.raw_data_case()) {
-        case RawData::RAW_DATA_NOT_SET:
+        case RawDataType::RAW_DATA_NOT_SET:
           break;
-        case RawData::kTpuData:
-          WriteTpuData(data.tpu_data(), &separator, output_);
+        case RawDataType::kTpuData:
+          WriteTpuData<RawDataType, IOBuffer>(data, &separator, output_);
           break;
-        case RawData::kDmaActivity:
+        case RawDataType::kDmaActivity:
           separator.Add();
           output_->Append(R"("DMA activity":)",
                           ProtoString(data.dma_activity()));
           break;
-        case RawData::kArgs:
+        case RawDataType::kArgs:
           for (const auto& arg : data.args().arg()) {
             switch (arg.value_case()) {
               case TraceEventArguments::Argument::kStrValue:
@@ -499,18 +509,22 @@ void WriteTraceFullTimespan(const Trace* trace, IOBuffer* output) {
                  R"(],)");
 }
 
-template <typename IOBuffer, typename TraceEventsContainer, typename RawData>
+template <typename IOBuffer, typename TraceEventsContainer,
+          typename RawDataType>
 void TraceEventsToJson(const JsonTraceOptions& options,
                        const TraceEventsContainer& events, IOBuffer* output) {
   // Set the displayTimeUnit to nanoseconds (default is milliseconds), so the UI
   // uses higher-precision when manipulating event times. Note that the
   // timestamps of trace events are always given in microseconds.
   output->Append(
-      R"({"displayTimeUnit":"ns","metadata":{"highres-ticks":true},)");
+      R"({"displayTimeUnit":"ns","metadata":{"highres-ticks":true}, "codeLink":")",
+      options.code_link, R"(",)");
 
+  output->Append(absl::StrFormat(R"("useNewBackend": %s,)",
+                                 options.use_new_backend ? "true" : "false"));
   WriteDetails(options.details, output);
   WriteSelectedDeviceIds(options.selected_device_ids, output);
-  WriteReturnedEventsSize(events.size(), output);
+  WriteReturnedEventsSize(events.NumEvents(), output);
   WriteFilteredByVisibility(events.FilterByVisibility(), output);
   WriteTraceFullTimespan(&events.trace(), output);
 
@@ -533,7 +547,7 @@ void TraceEventsToJson(const JsonTraceOptions& options,
       separator.Add();
       output->Append(R"({"args":{"name":)", JsonEscape(device.name()),
                      R"(},"name":"process_name","ph":"M","pid":)", device_id,
-                     "}");
+                     R"(,"thread_count":)", device.resources_size(), "}");
     }
     separator.Add();
     output->Append(R"({"args":{"sort_index":)", device_id,
@@ -563,7 +577,8 @@ void TraceEventsToJson(const JsonTraceOptions& options,
   colorer->SetUp(trace);
 
   // Write events.
-  JsonEventWriter<IOBuffer, RawData> writer(colorer, trace, references, output);
+  JsonEventWriter<IOBuffer, RawDataType> writer(colorer, trace, references,
+                                                output);
   events.ForAllEvents([&](const TraceEvent& event) {
     separator.Add();
     writer.WriteEvent(event);
@@ -582,7 +597,7 @@ class IOBufferAdapter {
 
   // Support IOBufferAdapter as a sink object for absl::Format.
   friend void AbslFormatFlush(IOBufferAdapter* buffer, absl::string_view s) {
-    buffer->output_->append(s);
+    absl::StrAppend(buffer->output_, s);
   }
 
  private:

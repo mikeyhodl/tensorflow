@@ -18,17 +18,19 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <sstream>
+#include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
-#include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_set.h"
-#include "absl/container/inlined_vector.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
-#include "tensorflow/compiler/xla/status_macros.h"
+#include "xla/status_macros.h"
 #include "tensorflow/core/framework/tensor_shape.pb.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
@@ -67,25 +69,25 @@ std::string GraphImportConfig::str() const {
   return ss.str();
 }
 
-Status ParseOutputArrayInfo(absl::string_view array_names,
-                            std::vector<string>* outputs) {
+absl::Status ParseOutputArrayInfo(absl::string_view array_names,
+                                  std::vector<string>* outputs) {
   TF_RETURN_IF_ERROR(ParseNodeNames(array_names, *outputs));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status ParseOutputArrayInfo(const std::vector<string>& output_names,
-                            std::vector<string>* outputs) {
+absl::Status ParseOutputArrayInfo(const std::vector<string>& output_names,
+                                  std::vector<string>* outputs) {
   for (auto& output_name : output_names) {
     if (output_name.empty()) continue;
     outputs->push_back(output_name);
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status ParseInputArrayInfo(absl::string_view array_names,
-                           absl::string_view data_types,
-                           absl::string_view shapes,
-                           GraphImportConfig::InputArrays* inputs) {
+absl::Status ParseInputArrayInfo(absl::string_view array_names,
+                                 absl::string_view data_types,
+                                 absl::string_view shapes,
+                                 GraphImportConfig::InputArrays* inputs) {
   std::vector<string> node_names;
   std::vector<string> node_dtypes;
   std::vector<std::optional<std::vector<int>>> node_shapes;
@@ -95,7 +97,7 @@ Status ParseInputArrayInfo(absl::string_view array_names,
   return ParseInputArrayInfo(node_names, node_dtypes, node_shapes, inputs);
 }
 
-static StatusOr<std::vector<int>> ParseShapeStr(
+static absl::StatusOr<std::vector<int>> ParseShapeStr(
     absl::string_view node_shapes_str) {
   std::vector<int> dims;
   for (absl::string_view dim_str : absl::StrSplit(node_shapes_str, ',')) {
@@ -112,15 +114,15 @@ static StatusOr<std::vector<int>> ParseShapeStr(
   return dims;
 }
 
-static Status HandleSubtype(absl::string_view subtype,
-                            ArrayInfo::SubTypeInfo* result) {
+static absl::Status HandleSubtype(absl::string_view subtype,
+                                  ArrayInfo::SubTypeInfo* result) {
   std::vector<std::string> shape_and_type = absl::StrSplit(subtype, ':');
 
   std::vector<int> dims;
   if (shape_and_type.size() > 2) {
     return errors::FailedPrecondition("Invalid argument: '", subtype,
                                       "', expected a single shape and type pair"
-                                      " seperated with a ':'");
+                                      " separated with a ':'");
   } else if (shape_and_type.size() == 2) {
     const auto& shape_str = shape_and_type[0];
     TF_ASSIGN_OR_RETURN(dims, ParseShapeStr(shape_str));
@@ -138,10 +140,10 @@ static Status HandleSubtype(absl::string_view subtype,
     subtype_tensor_shape.add_dim()->set_size(dim);
   }
   *result = {subtype_dtype, subtype_tensor_shape};
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status ParseInputArrayInfo(
+absl::Status ParseInputArrayInfo(
     const std::vector<string>& node_names,
     const std::vector<string>& node_dtypes,
     const std::vector<std::optional<std::vector<int>>>& node_shapes,
@@ -214,10 +216,10 @@ Status ParseInputArrayInfo(
       }
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status ParseNodeShapes(
+absl::Status ParseNodeShapes(
     absl::string_view shapes_str,
     std::vector<std::optional<std::vector<int>>>& shapes_vector) {
   shapes_vector.clear();
@@ -232,16 +234,16 @@ Status ParseNodeShapes(
       shapes_vector.push_back(std::move(shape));
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status ParseNodeNames(absl::string_view names_str,
-                      std::vector<std::string>& names_vector) {
+absl::Status ParseNodeNames(absl::string_view names_str,
+                            std::vector<std::string>& names_vector) {
   names_vector = absl::StrSplit(names_str, ',', absl::SkipEmpty());
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-static StatusOr<std::vector<std::string>> ParseDTypesHelper(
+static absl::StatusOr<std::vector<std::string>> ParseDTypesHelper(
     absl::string_view data_types_str) {
   bool inside_subtype = false;
   int cur_pos = 0;
@@ -284,13 +286,13 @@ static StatusOr<std::vector<std::string>> ParseDTypesHelper(
   return dtypes;
 }
 
-Status ParseNodeDataTypes(absl::string_view data_types_str,
-                          std::vector<std::string>& data_type_vector) {
+absl::Status ParseNodeDataTypes(absl::string_view data_types_str,
+                                std::vector<std::string>& data_type_vector) {
   data_type_vector.clear();
   if (!data_types_str.empty()) {
     TF_ASSIGN_OR_RETURN(data_type_vector, ParseDTypesHelper(data_types_str));
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 }  // namespace tensorflow

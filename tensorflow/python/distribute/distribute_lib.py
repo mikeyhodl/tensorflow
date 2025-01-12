@@ -27,16 +27,17 @@ the same way with eager and graph execution.
 *Guides*
 
 * [TensorFlow v2.x](https://www.tensorflow.org/guide/distributed_training)
-* [TensorFlow v1.x](https://github.com/tensorflow/docs/blob/master/site/en/r1/guide/distribute_strategy.ipynb)
+* [TensorFlow
+v1.x](https://github.com/tensorflow/docs/blob/master/site/en/r1/guide/distribute_strategy.ipynb)
 
 *Tutorials*
 
-* [Distributed Training Tutorials](https://www.tensorflow.org/tutorials/distribute/)
+* [Distributed Training
+Tutorials](https://www.tensorflow.org/tutorials/distribute/)
 
   The tutorials cover how to use `tf.distribute.Strategy` to do distributed
-  training with native Keras APIs, custom training loops,
-  and Estimator APIs. They also cover how to save/load model when using
-  `tf.distribute.Strategy`.
+  training with native Keras APIs, and custom training loops.
+  They also cover how to save/load model when using `tf.distribute.Strategy`.
 
 *Glossary*
 
@@ -214,14 +215,17 @@ from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import indexed_slices
 from tensorflow.python.framework import ops
+from tensorflow.python.framework import tensor as tensor_lib
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.framework import tensor_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import custom_gradient
 from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import ref_variable
 from tensorflow.python.ops import summary_ops_v2
 from tensorflow.python.ops import variable_scope
+from tensorflow.python.ops import variable_v1
 from tensorflow.python.platform import tf_logging
 from tensorflow.python.trackable import base as trackable
 from tensorflow.python.types import distribute as ds_types
@@ -536,7 +540,7 @@ def in_cross_replica_context():
 
 
 @tf_export("distribute.get_strategy")
-def get_strategy():
+def get_strategy() -> "StrategyBase":
   """Returns the current `tf.distribute.Strategy` object.
 
   Typically only used in a cross-replica context:
@@ -724,19 +728,21 @@ class _CurrentDistributionContext(object):
   Also: overrides the variable creator and optionally the current device.
   """
 
-  def __init__(self,
-               strategy,
-               var_creator_scope,
-               var_scope=None,
-               resource_creator_scope=None,
-               default_device=None):
+  def __init__(
+      self,
+      strategy,
+      var_creator_scope,
+      var_scope=None,
+      resource_creator_scope=None,
+      default_device_scope=None,
+  ):
     self._context = _CrossReplicaThreadMode(  # pylint: disable=protected-access
         strategy)
     self._var_creator_scope = var_creator_scope
     self._var_scope = var_scope
     self._resource_creator_scope = resource_creator_scope
-    if default_device:
-      self._device_scope = ops.device(default_device)
+    if default_device_scope:
+      self._device_scope = default_device_scope
     else:
       self._device_scope = None
     self._same_scope_again_count = 0
@@ -760,6 +766,9 @@ class _CurrentDistributionContext(object):
     return self._context.strategy
 
   def __exit__(self, exception_type, exception_value, traceback):
+    if hasattr(self._context.strategy.extended, "_lazy_variable_tracker"):
+      self._context.strategy.extended._lazy_variable_tracker.initialize_all()
+
     if self._same_scope_again_count > 0:
       self._same_scope_again_count -= 1
       return
@@ -941,7 +950,7 @@ class ValueContext(object):
   def __init__(self,
                replica_id_in_sync_group=0,
                num_replicas_in_sync=1):
-    """Initializes an ValueContext object.
+    """Initializes a ValueContext object.
 
     Args:
       replica_id_in_sync_group: the current replica_id, should be an int in
@@ -1090,10 +1099,6 @@ class StrategyBase(object):
   * To use it with Keras `compile`/`fit`,
     [please
     read](https://www.tensorflow.org/guide/distributed_training#using_tfdistributestrategy_with_keras).
-  * You may pass descendant of `tf.distribute.Strategy` to
-    `tf.estimator.RunConfig` to specify how a `tf.estimator.Estimator`
-    should distribute its computation. See
-    [guide](https://www.tensorflow.org/guide/distributed_training#using_tfdistributestrategy_with_estimator_limited_support).
   * Otherwise, use `tf.distribute.Strategy.scope` to specify that a
     strategy should be used when building an executing your model.
     (This puts you in the "cross-replica context" for this strategy, which
@@ -1171,9 +1176,6 @@ class StrategyBase(object):
   def __init__(self, extended):
     self._extended = extended
 
-    # Flag that is used to indicate whether distribution strategy is used with
-    # Estimator. This is required for backward compatibility of loss scaling
-    # when using v1 optimizer with estimator.
     self._scale_loss_for_estimator = False
 
     if not hasattr(extended, "_retrace_functions_for_each_device"):
@@ -2467,6 +2469,11 @@ class StrategyExtendedV2(object):
     """Returns one or a list of ops.resource_creator_scope for some Strategy."""
     return None
 
+  def _default_device_scope(self):
+    if self._default_device:
+      return ops.device(self._default_device)
+    return None
+
   def _container_strategy(self):
     """Get the containing `tf.distribute.Strategy`.
 
@@ -2510,8 +2517,8 @@ class StrategyExtendedV2(object):
         elif (isinstance(kwargs["initial_value"], functools.partial) and
               isinstance(kwargs["initial_value"].func,
                          trackable.CheckpointInitialValueCallable)):
-          # Some libraries (e.g, Keras) create partial function out of initializer
-          # to bind shape/dtype, for example:
+          # Some libraries (e.g., Keras) create partial function out of
+          # initializer to bind shape/dtype, for example:
           #  initial_val = functools.partial(initializer, shape, dtype=dtype)
           # Therefore to get the restore_uid we need to examine the "func" of
           # the partial function.
@@ -2547,9 +2554,11 @@ class StrategyExtendedV2(object):
         variable_scope.variable_creator_scope(creator_with_resource_vars),
         variable_scope.variable_scope(
             variable_scope.get_variable_scope(),
-            custom_getter=distributed_getter),
+            custom_getter=distributed_getter,
+        ),
         strategy.extended._resource_creator_scope(),  # pylint: disable=protected-access
-        self._default_device)
+        self._default_device_scope(),
+    )
 
   def _allow_variable_partition(self):
     return False
@@ -2729,16 +2738,19 @@ class StrategyExtendedV2(object):
     Returns:
       A tensor or value reduced to `destinations`.
     """
-    if options is None:
-      options = collective_util.Options()
-    _require_cross_replica_or_default_context_extended(self)
-    assert not isinstance(destinations, (list, tuple))
-    assert not isinstance(reduce_op, variable_scope.VariableAggregation)
-    if isinstance(reduce_op, six.string_types):
-      reduce_op = reduce_util.ReduceOp(reduce_op.upper())
-    assert (reduce_op == reduce_util.ReduceOp.SUM or
-            reduce_op == reduce_util.ReduceOp.MEAN)
-    return self._reduce_to(reduce_op, value, destinations, options)
+    with monitoring.MonitoredTimer(
+        distributed_api_time_counter.get_cell(self.__class__.__name__, "Reduce_to_eagerly")
+    ) if not ops.inside_function() else contextlib.nullcontext():
+      if options is None:
+        options = collective_util.Options()
+      _require_cross_replica_or_default_context_extended(self)
+      assert not isinstance(destinations, (list, tuple))
+      assert not isinstance(reduce_op, variable_scope.VariableAggregation)
+      if isinstance(reduce_op, six.string_types):
+        reduce_op = reduce_util.ReduceOp(reduce_op.upper())
+      assert (reduce_op == reduce_util.ReduceOp.SUM or
+              reduce_op == reduce_util.ReduceOp.MEAN)
+      return self._reduce_to(reduce_op, value, destinations, options)
 
   def _reduce_to(self, reduce_op, value, destinations, options):
     raise NotImplementedError("must be implemented in descendants")
@@ -2807,13 +2819,16 @@ class StrategyExtendedV2(object):
     Returns:
       A list of reduced values, one per pair in `value_destination_pairs`.
     """
-    if options is None:
-      options = collective_util.Options()
-    _require_cross_replica_or_default_context_extended(self)
-    assert not isinstance(reduce_op, variable_scope.VariableAggregation)
-    if isinstance(reduce_op, six.string_types):
-      reduce_op = reduce_util.ReduceOp(reduce_op.upper())
-    return self._batch_reduce_to(reduce_op, value_destination_pairs, options)
+    with monitoring.MonitoredTimer(
+        distributed_api_time_counter.get_cell(self.__class__.__name__, "Batch_reduce_to_eagerly")
+    ) if not ops.inside_function() else contextlib.nullcontext():
+      if options is None:
+        options = collective_util.Options()
+      _require_cross_replica_or_default_context_extended(self)
+      assert not isinstance(reduce_op, variable_scope.VariableAggregation)
+      if isinstance(reduce_op, six.string_types):
+        reduce_op = reduce_util.ReduceOp(reduce_op.upper())
+      return self._batch_reduce_to(reduce_op, value_destination_pairs, options)
 
   def _batch_reduce_to(self, reduce_op, value_destination_pairs, options):
     return [
@@ -3523,7 +3538,7 @@ class ReplicaContextBase(object):
     NOTE: For `tf.distribute.MirroredStrategy` and
     `tf.distribute.experimental.MultiWorkerMirroredStrategy`, this returns a
     nested
-    list of device strings, e.g, [["GPU:0"]].
+    list of device strings, e.g., [["GPU:0"]].
     """
     require_replica_context(self)
     return (device_util.current(),)
@@ -3909,7 +3924,7 @@ class ReplicaContextV1(ReplicaContextBase):
 
 def _batch_reduce_destination(x):
   """Returns the destinations for batch all-reduce."""
-  if isinstance(x, ops.Tensor):
+  if isinstance(x, tensor_lib.Tensor):
     # If this is a one device strategy.
     return x.device
   else:
@@ -4026,8 +4041,8 @@ class _DefaultDistributionExtended(StrategyExtendedV1):
   def _experimental_make_numpy_dataset(self, numpy_input, session):
     numpy_flat = nest.flatten(numpy_input)
     vars_flat = tuple(
-        variable_scope.variable(array_ops.zeros(i.shape, i.dtype),
-                                trainable=False, use_resource=True)
+        variable_v1.VariableV1(array_ops.zeros(i.shape, i.dtype),
+                               trainable=False, use_resource=True)
         for i in numpy_flat
     )
     for v, i in zip(vars_flat, numpy_flat):
@@ -4172,7 +4187,7 @@ class _DefaultReplicaContext(ReplicaContext):
 # So here we catch any attempts to deserialize variables
 # when using distribution strategies.
 # pylint: disable=protected-access
-_original_from_proto = variable_scope._from_proto_fn
+_original_from_proto = ref_variable._from_proto_fn
 
 
 def _from_proto_fn(v, import_scope=None):
@@ -4183,7 +4198,7 @@ def _from_proto_fn(v, import_scope=None):
   else:
     return _original_from_proto(v, import_scope=import_scope)
 
-variable_scope._from_proto_fn = _from_proto_fn
+ref_variable._from_proto_fn = _from_proto_fn
 # pylint: enable=protected-access
 
 
@@ -4213,3 +4228,6 @@ distribution_strategy_input_api_counter = monitoring.Counter(
 distributed_variable_creation_time_counter = monitoring.Counter(
     "/tensorflow/api/distribution_strategy/distributed_variable_creation_time_usecs",
     "Time to create distributed variables (us).", "strategy", "if_graph_building")
+distributed_api_time_counter = monitoring.Counter(
+    "/tensorflow/api/distribution_strategy/distributed_variable_api_time_usecs",
+    "Time spent on an API (us).", "strategy", "api")

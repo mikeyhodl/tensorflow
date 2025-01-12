@@ -15,11 +15,16 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tfrt/transforms/update_op_cost_in_tfrt_mlir.h"
 
 #include <cstdint>
-#include <cstdlib>
 #include <string>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/Parser/Parser.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tfrt/ir/tfrt_fallback_async.h"
 #include "tensorflow/compiler/mlir/tfrt/ir/tfrt_fallback_sync.h"
@@ -61,17 +66,15 @@ TEST(CostUpdateTest, Basic) {
   ASSERT_TRUE(module);
 
   // Create a cost recorder with fake cost records.
-  auto fake_recorded_op_cost_map = GetOpCostMap(module.get());
-  EXPECT_EQ(fake_recorded_op_cost_map.size(), 1);
+  auto expected_op_cost_map = GetOpCostMap(module.get());
+  EXPECT_EQ(expected_op_cost_map.size(), 1);
   unsigned int seed = 23579;
-  for (auto& [op_key, cost] : fake_recorded_op_cost_map) {
+  for (auto& [op_key, cost] : expected_op_cost_map) {
     cost = rand_r(&seed) % 1000;
   }
   tensorflow::tfrt_stub::CostRecorder cost_recorder;
-  absl::flat_hash_map<int64_t, uint64_t> expected_op_cost_map;
-  for (const auto& [op_key, cost] : fake_recorded_op_cost_map) {
-    cost_recorder.RecordCostNanosecond(op_key, cost);
-    expected_op_cost_map[op_key] = cost_recorder.GetCost(op_key);
+  for (const auto& [op_key, cost] : expected_op_cost_map) {
+    cost_recorder.RecordCost(op_key, cost);
   }
 
   // Update the TFRT MLIR with the cost recorder.

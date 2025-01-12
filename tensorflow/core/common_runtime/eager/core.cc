@@ -12,6 +12,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <utility>
+#include <variant>
+
 #include "tensorflow/c/c_api_internal.h"
 #include "tensorflow/c/eager/abstract_function.h"
 #include "tensorflow/c/tf_tensor_internal.h"
@@ -34,7 +37,7 @@ namespace tensorflow {
 
 // TODO(b/152902651): This should not depend on EagerContext. This can be
 // resolved by storing ctx->HostCPU() in the TensorHandle class.
-AbstractTensorInterface* TensorHandle::Resolve(Status* status) {
+AbstractTensorInterface* TensorHandle::Resolve(absl::Status* status) {
   *status = WaitUnknownDevice();
   if (!status->ok()) {
     return nullptr;
@@ -99,7 +102,7 @@ AbstractTensorInterface* TensorHandle::Resolve(Status* status) {
 
 ImmediateExecutionTensorHandle* EagerContext::CopyTensorHandleToDevice(
     ImmediateExecutionTensorHandle* handle, const char* device_name,
-    Status* status) {
+    absl::Status* status) {
   ImmediateExecutionTensorHandle* result = nullptr;
   Device* device;
   *status = this->FindDeviceFromName(device_name, &device);
@@ -152,8 +155,8 @@ ImmediateExecutionOperation* EagerContext::CreateOperation() {
 
 // TODO(b/152902651): Once we move many execute.cc functions into
 // eager_operation.cc we can avoid a circular dependency between them.
-Status EagerOperation::Execute(absl::Span<AbstractTensorHandle*> retvals,
-                               int* num_retvals) {
+absl::Status EagerOperation::Execute(absl::Span<AbstractTensorHandle*> retvals,
+                                     int* num_retvals) {
   for (ImmediateExecutionTensorHandle* handle : inputs_) {
     if (TensorHandle::classof(handle)) {
       TF_RETURN_IF_ERROR(down_cast<TensorHandle*>(handle)->WaitUnknownDevice());
@@ -161,7 +164,7 @@ Status EagerOperation::Execute(absl::Span<AbstractTensorHandle*> retvals,
   }
 
   // Run eager placement logic.
-  class Device* device = absl::get<class Device*>(Device());
+  class Device* device = std::get<class Device*>(Device());
   if (device == nullptr) {
     TF_RETURN_IF_ERROR(eager::MaybePinToResourceDevice(&device, *this));
   }

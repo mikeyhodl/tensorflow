@@ -20,10 +20,12 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/common_runtime/graph_constructor.h"
 #include "tensorflow/core/framework/full_type.pb.h"
 #include "tensorflow/core/framework/function_testlib.h"
+#include "tensorflow/core/framework/graph_debug_info.pb.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/graph/benchmark_testlib.h"
 #include "tensorflow/core/graph/node_builder.h"
@@ -37,6 +39,8 @@ limitations under the License.
 #include "tensorflow/core/platform/test_benchmark.h"
 
 namespace tensorflow {
+
+using ::testing::UnorderedElementsAre;
 
 REGISTER_OP("OneInput").Input("x: float");
 
@@ -114,7 +118,7 @@ class GraphTest : public ::testing::Test {
     NodeDef node_def;
     TF_CHECK_OK(builder.Finalize(&node_def));
 
-    Status s;
+    absl::Status s;
     Node* node = graph_.AddNode(node_def, &s);
     TF_CHECK_OK(s);
     return node;
@@ -276,7 +280,7 @@ TEST_F(GraphTest, NodeByIndex) {
   graph_.RemoveNode(a);
 
   // 'c's input_node entry should be invalidated.
-  Status s = c->input_node(0, &a_copy);
+  absl::Status s = c->input_node(0, &a_copy);
   EXPECT_FALSE(s.ok());
 
   // Add two new nodes.
@@ -369,21 +373,21 @@ TEST_F(GraphTest, AddAttr) {
   n1->AddAttr("_a", "new_attr");
 
   string attr;
-  EXPECT_EQ(OkStatus(), GetNodeAttr(n1->attrs(), "_a", &attr));
+  EXPECT_EQ(absl::OkStatus(), GetNodeAttr(n1->attrs(), "_a", &attr));
   EXPECT_EQ("new_attr", attr);
 
   Node* n2 = graph_.CopyNode(n1);
 
   n1->AddAttr("_b", "new_attr_2");
 
-  EXPECT_EQ(OkStatus(), GetNodeAttr(n1->attrs(), "_a", &attr));
+  EXPECT_EQ(absl::OkStatus(), GetNodeAttr(n1->attrs(), "_a", &attr));
   EXPECT_EQ("new_attr", attr);
-  EXPECT_EQ(OkStatus(), GetNodeAttr(n1->attrs(), "_b", &attr));
+  EXPECT_EQ(absl::OkStatus(), GetNodeAttr(n1->attrs(), "_b", &attr));
   EXPECT_EQ("new_attr_2", attr);
 
-  EXPECT_EQ(OkStatus(), GetNodeAttr(n2->attrs(), "_a", &attr));
+  EXPECT_EQ(absl::OkStatus(), GetNodeAttr(n2->attrs(), "_a", &attr));
   EXPECT_EQ("new_attr", attr);
-  EXPECT_NE(OkStatus(), GetNodeAttr(n2->attrs(), "_b", &attr));
+  EXPECT_NE(absl::OkStatus(), GetNodeAttr(n2->attrs(), "_b", &attr));
 }
 
 // Convert edge iteration results into a sorted string.
@@ -442,7 +446,7 @@ TEST_F(GraphTest, IsValidNode) {
   TF_CHECK_OK(NodeBuilder("g2_node2", "NoOp").Finalize(&graph2, &g2_node2));
 
   // nullptr
-  Status s = graph_.IsValidNode(nullptr);
+  absl::Status s = graph_.IsValidNode(nullptr);
   EXPECT_EQ(error::INVALID_ARGUMENT, s.code());
   EXPECT_EQ(string("Node is null"), s.message());
 
@@ -582,7 +586,7 @@ TEST_F(GraphTest, UpdateEdge) {
   EXPECT_EQ("0->1;0->2;2->1;2->3;2->4;2->5;4->1;", EdgeIter(graph_));
 
   // Update a's 1st output which is out of range.
-  Status s = graph_.UpdateEdge(a, 1, d, 0);
+  absl::Status s = graph_.UpdateEdge(a, 1, d, 0);
   EXPECT_FALSE(s.ok());
   EXPECT_EQ(
       s.message(),
@@ -620,12 +624,12 @@ TEST_F(GraphTest, EdgeDebugString) {
   EXPECT_EQ(s1, "[id=0 <NULL>:0 -> <NULL>:0]");
 
   // Print edge with null src node
-  auto e2 = BuildEdge(2, 0, b, 1, 1);
+  auto e2 = BuildEdge(2, nullptr, b, 1, 1);
   auto s2 = e2->DebugString();
   EXPECT_EQ(s2, "[id=2 <NULL>:1 -> B:1]");
 
   // Print edge with null dst node
-  auto e3 = BuildEdge(3, a, 0, 2, 1);
+  auto e3 = BuildEdge(3, a, nullptr, 2, 1);
   auto s3 = e3->DebugString();
   EXPECT_EQ(s3, "[id=3 A:2 -> <NULL>:1]");
 }
@@ -648,7 +652,7 @@ TEST_F(GraphTest, AddFunctionLibrary) {
   FunctionDefLibrary error_proto = proto;
   *error_proto.mutable_function(0)->add_node_def() =
       error_proto.function(0).node_def(0);
-  Status s = graph_.AddFunctionLibrary(error_proto);
+  absl::Status s = graph_.AddFunctionLibrary(error_proto);
   EXPECT_FALSE(s.ok());
   EXPECT_EQ(s.message(),
             "Cannot add function 'XTimesTwo' because a different function with "
@@ -740,7 +744,7 @@ TEST_F(GraphTest, NodeShrinkTypeOutput) {
   NodeDef node_def;
   TF_CHECK_OK(builder.Finalize(&node_def));
 
-  Status s;
+  absl::Status s;
   Node* node = graph_.AddNode(node_def, &s);
   TF_CHECK_OK(s);
 
@@ -788,7 +792,7 @@ TEST_F(GraphTest, NodeShrinkTypeInput) {
   NodeDef node_def;
   TF_CHECK_OK(builder.Finalize(&node_def));
 
-  Status s;
+  absl::Status s;
   Node* node = graph_.AddNode(node_def, &s);
   TF_CHECK_OK(s);
 
@@ -826,6 +830,37 @@ TEST_F(GraphTest, NodeShrinkTypeInput) {
   EXPECT_EQ(ft->args(2).args(0).type_id(), TFT_INT64);
   ASSERT_EQ(ft->args(3).args_size(), 1);
   EXPECT_EQ(ft->args(3).args(0).type_id(), TFT_STRING);
+}
+
+TEST(AddInput, AddsControlSlot) {
+  auto input_name = "input-name";
+  auto expected_input_name = absl::StrCat("^", input_name);
+  NodeDef node_def;
+
+  tensorflow::Graph::AddInput(&node_def, input_name, Graph::kControlSlot);
+
+  EXPECT_EQ(node_def.input(0), expected_input_name);
+}
+
+TEST(AddInput, AddsSourceSlotZero) {
+  auto input_name = "input-name";
+  NodeDef node_def;
+
+  tensorflow::Graph::AddInput(&node_def, input_name, 0);
+
+  EXPECT_EQ(node_def.input(0), input_name);
+}
+
+TEST(AddInput, AddsOtherSlots) {
+  auto input_name = "input-name";
+  int arbitrary_slot = 37;
+  auto expected_input_name =
+      absl::StrCat(input_name, ":", arbitrary_slot);  // non-absl ok
+  NodeDef node_def;
+
+  tensorflow::Graph::AddInput(&node_def, input_name, arbitrary_slot);
+
+  EXPECT_EQ(node_def.input(0), expected_input_name);
 }
 
 void BM_InEdgeIteration(::testing::benchmark::State& state) {

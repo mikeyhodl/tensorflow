@@ -15,10 +15,14 @@ limitations under the License.
 
 #include "tensorflow/core/grappler/optimizers/constant_folding.h"
 
+#include <string>
+
 #include "tensorflow/cc/ops/array_ops.h"
 #include "tensorflow/cc/ops/array_ops_internal.h"
 #include "tensorflow/cc/ops/const_op.h"
+#include "tensorflow/cc/ops/resource_variable_ops.h"
 #include "tensorflow/cc/ops/standard_ops.h"
+#include "tensorflow/core/framework/full_type.pb.h"
 #include "tensorflow/core/framework/function_testlib.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
@@ -82,9 +86,12 @@ class ConstantFoldingTest : public GrapplerTest {
       GrapplerItem item;
       TF_CHECK_OK(s.ToGraphDef(&item.graph));
       item.fetch = {"mul1", "mul2", "add1", "add2"};
-      ConstantFolding optimizer(/*cpu_device=*/nullptr);
+      // Use aggressive mode to force optimization of zero multiplication.
+      ConstantFolding optimizer(RewriterConfig::AGGRESSIVE,
+                                /*cpu_device=*/nullptr);
       GraphDef output;
-      Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+      absl::Status status =
+          optimizer.Optimize(/*cluster=*/nullptr, item, &output);
       TF_EXPECT_OK(status);
 
       EXPECT_EQ(7, output.node_size());
@@ -173,7 +180,8 @@ class ConstantFoldingTest : public GrapplerTest {
 
     ConstantFolding optimizer(/*cpu_device=*/nullptr);
     GraphDef output;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+    absl::Status status =
+        optimizer.Optimize(/*cluster=*/nullptr, item, &output);
     TF_EXPECT_OK(status);
 
     EXPECT_EQ(5, output.node_size());
@@ -246,7 +254,7 @@ class ConstantFoldingTest : public GrapplerTest {
 
     ConstantFolding optimizer(/*cpu_device=*/nullptr);
     GraphDef got;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+    absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
     TF_EXPECT_OK(status);
 
     GraphDef want;
@@ -292,7 +300,7 @@ TEST_F(ConstantFoldingTest, SimpleFolding) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(1, output.node_size());
@@ -337,7 +345,7 @@ TEST_F(ConstantFoldingTest, AddTree) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   // We expect the following rewrite(s) to occur:
@@ -416,7 +424,7 @@ TEST_F(ConstantFoldingTest, AddSubtactTree) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   // We expect the following rewrite(s) to occur:
@@ -509,7 +517,7 @@ TEST_F(ConstantFoldingTest, ConstantPushDown) {
 
             ConstantFolding optimizer(/*cpu_device=*/nullptr);
             GraphDef output;
-            Status status =
+            absl::Status status =
                 optimizer.Optimize(/*cluster=*/nullptr, item, &output);
             TF_EXPECT_OK(status);
 
@@ -575,7 +583,7 @@ TEST_F(ConstantFoldingTest, ConstantPushDownBiasAdd) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(24, output.node_size());
@@ -825,9 +833,12 @@ TEST_F(ConstantFoldingTest, NeutralElement) {
     item.fetch = {"stack",      "matmul3",    "matmul4",   "mul1_bcast",
                   "mul2_bcast", "add1_bcast", "add2_bcast"};
 
-    ConstantFolding optimizer(/*cpu_device=*/nullptr);
+    // Use aggressive mode to force optimization of zero multiplication.
+    ConstantFolding optimizer(RewriterConfig::AGGRESSIVE,
+                              /*cpu_device=*/nullptr);
     GraphDef output;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+    absl::Status status =
+        optimizer.Optimize(/*cluster=*/nullptr, item, &output);
     TF_EXPECT_OK(status);
 
     const string suffix =
@@ -1012,7 +1023,7 @@ TEST_F(ConstantFoldingTest, StrengthReduce_Reciprocal) {
   item.fetch = {"div_f", "div_i", "realdiv"};
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(8, output.node_size());
@@ -1100,9 +1111,10 @@ TEST_F(ConstantFoldingTest, NeutralElement_PartialShape_UnknownOutputShape) {
   GrapplerItem item;
   TF_CHECK_OK(s.ToGraphDef(&item.graph));
 
-  ConstantFolding optimizer(/*cpu_device=*/nullptr);
+  // Use aggressive mode to force optimization of zero multiplication.
+  ConstantFolding optimizer(RewriterConfig::AGGRESSIVE, /*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(15, output.node_size());
@@ -1172,9 +1184,10 @@ TEST_F(ConstantFoldingTest, NeutralElement_PartialShape_KnownOutputShape) {
   GrapplerItem item;
   TF_CHECK_OK(s.ToGraphDef(&item.graph));
 
-  ConstantFolding optimizer(/*cpu_device=*/nullptr);
+  // Use aggressive mode to force optimization of zero multiplication.
+  ConstantFolding optimizer(RewriterConfig::AGGRESSIVE, /*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(10, output.node_size());
@@ -1232,7 +1245,7 @@ TEST_F(ConstantFoldingTest, CreateConstNodes) {
   TF_CHECK_OK(s.ToGraphDef(&item.graph));
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(24, output.node_size());
@@ -1281,7 +1294,7 @@ TEST_F(ConstantFoldingTest, FoldingNodeWithTwoOutputs) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(2, output.node_size());
@@ -1322,7 +1335,7 @@ TEST_F(ConstantFoldingTest, ControlDependencies) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   std::vector<string> expected_nodes = {"dflt", "p1", "p2", "i3"};
@@ -1365,7 +1378,7 @@ TEST_F(ConstantFoldingTest, ControlDependenciesEmptyFetch) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   std::vector<string> expected_nodes = {"dflt", "p1", "p2", "c",
@@ -1423,7 +1436,7 @@ TEST_F(ConstantFoldingTest, ControlDependenciesDeduplicate) {
   EXPECT_EQ(1, tensors_expected.size());
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   std::vector<string> expected_nodes = {"dflt", "p1", "p2", "i2"};
@@ -1500,7 +1513,7 @@ TEST_F(ConstantFoldingTest, VariableNumberOfOutputs) {
   item.fetch = outputs;
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   int constant_folded = 0;
@@ -1538,7 +1551,7 @@ TEST_F(ConstantFoldingTest, ShapeMaterialization) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   int found = 0;
@@ -1588,7 +1601,7 @@ TEST_F(ConstantFoldingTest, ShapeMaterializationEmptyFetch) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   int found = 0;
@@ -1654,7 +1667,7 @@ TEST_F(ConstantFoldingTest, ShapeMaterializationShapeN) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
   int found = 0;
   for (const auto& node : output.node()) {
@@ -1726,7 +1739,7 @@ TEST_F(ConstantFoldingTest, ShapeMaterializationShapeN_MultipleOutputs) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   int found = 0;
@@ -1798,7 +1811,7 @@ TEST_F(ConstantFoldingTest, SwitchNodesEmptyFetch) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   std::set<string> present_nodes = {"v_in",     "v_ctrl",
@@ -1900,7 +1913,7 @@ TEST_F(ConstantFoldingTest, SwitchNodes) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
   std::set<string> present_nodes = {"v_in",     "v_ctrl",
                                     "switch",   "i",
@@ -1975,7 +1988,7 @@ TEST_F(ConstantFoldingTest, SplitRemoval) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2021,7 +2034,7 @@ TEST_F(ConstantFoldingTest, SplitVRemoval) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2071,7 +2084,7 @@ TEST_F(ConstantFoldingTest, TransposeOnSize1DimsRemoval) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2108,7 +2121,7 @@ TEST_F(ConstantFoldingTest, RandomShuffleOnScalarRemoval) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2154,7 +2167,7 @@ TEST_F(ConstantFoldingTest, ReverseOnSize1DimsRemoval) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2190,7 +2203,7 @@ TEST_F(ConstantFoldingTest, SliceWithSameDimensionRemoval) {
 
     ConstantFolding optimizer(/*cpu_device=*/nullptr);
     GraphDef got;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+    absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
     TF_EXPECT_OK(status);
 
     GraphDef want;
@@ -2237,7 +2250,7 @@ TEST_F(ConstantFoldingTest, SliceWithSameDimensionRemoval) {
 
     ConstantFolding optimizer(/*cpu_device=*/nullptr);
     GraphDef got;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+    absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
     TF_EXPECT_OK(status);
 
     GraphDef want;
@@ -2286,7 +2299,7 @@ TEST_F(ConstantFoldingTest, StridedSliceWithSameDimensionRemoval) {
 
     ConstantFolding optimizer(/*cpu_device=*/nullptr);
     GraphDef got;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+    absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
     TF_EXPECT_OK(status);
 
     GraphDef want;
@@ -2344,7 +2357,7 @@ TEST_F(ConstantFoldingTest, StridedSliceWithSameDimensionRemoval) {
 
     ConstantFolding optimizer(/*cpu_device=*/nullptr);
     GraphDef got;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+    absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
     TF_EXPECT_OK(status);
 
     GraphDef want;
@@ -2397,7 +2410,7 @@ TEST_F(ConstantFoldingTest, TileWithMultipliesBeingOne) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2430,7 +2443,7 @@ TEST_F(ConstantFoldingTest, MergeConcat) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2460,7 +2473,7 @@ TEST_F(ConstantFoldingTest, MergeConcat_SameInput) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2491,7 +2504,7 @@ TEST_F(ConstantFoldingTest, MergeConcat_ConcatWithConst) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2522,7 +2535,7 @@ TEST_F(ConstantFoldingTest, MergeConcat_AxisMismatch) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2557,7 +2570,7 @@ TEST_F(ConstantFoldingTest, MergeConcat_PartialFolding) {
 
   ConstantFolding optimizer(nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2592,7 +2605,7 @@ TEST_F(ConstantFoldingTest, SqueezeWithAllDimensionsGreaterThanOne) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef got;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
   TF_EXPECT_OK(status);
 
   GraphDef want;
@@ -2644,7 +2657,7 @@ TEST_F(ConstantFoldingTest, NoOpReduction) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   int found = 0;
@@ -2722,7 +2735,7 @@ TEST_F(ConstantFoldingTest, SingleElementEmptyAxisReduction) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   // Ensure Mean node is optimized to Reshape.
@@ -2817,7 +2830,7 @@ TEST_F(ConstantFoldingTest, NoOpReshape) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   int found = 0;
@@ -2879,7 +2892,7 @@ TEST_F(ConstantFoldingTest, Packing) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   const std::vector<string> fetch_nodes = {"i1", "i2"};
@@ -2913,7 +2926,7 @@ TEST_F(ConstantFoldingTest, LargeConstantNoSizeIncrease) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   item.graph.Swap(&output);
@@ -2955,7 +2968,7 @@ TEST_F(ConstantFoldingTest, MaterializeBroadcastGradientArgs) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   std::vector<string> fetch_nodes = {"o1", "o2", "p1", "p2"};
@@ -3036,7 +3049,7 @@ TEST_F(ConstantFoldingTest, MaterializeBroadcastGradientArgs_InfiniteLoop) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   // Run a second time to make sure the optimization is idempotent.
@@ -3128,7 +3141,8 @@ TEST_F(ConstantFoldingTest, MaterializeReductionIndices) {
     ConstantFolding optimizer(RewriterConfig::AGGRESSIVE,
                               /*cpu_device=*/nullptr);
     GraphDef output;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+    absl::Status status =
+        optimizer.Optimize(/*cluster=*/nullptr, item, &output);
     TF_EXPECT_OK(status);
 
     // Run a second time to make sure the optimization is idempotent.
@@ -3184,7 +3198,8 @@ TEST_F(ConstantFoldingTest, MaterializeReductionIndices_NotFullReduction) {
     ConstantFolding optimizer(RewriterConfig::AGGRESSIVE,
                               /*cpu_device=*/nullptr);
     GraphDef output;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+    absl::Status status =
+        optimizer.Optimize(/*cluster=*/nullptr, item, &output);
     TF_EXPECT_OK(status);
 
     CompareGraphs(item.graph, output);
@@ -3205,7 +3220,7 @@ TEST_F(ConstantFoldingTest, LargeConstant) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   // Make sure the diag node hasn't been folded, since it would use too much
@@ -3251,7 +3266,7 @@ TEST_F(ConstantFoldingTest, SwitchIdenticalInputs) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(6, output.node_size());
@@ -3343,7 +3358,8 @@ TEST_F(ConstantFoldingTest, PartialFolding_AssociativeAndCommutative) {
 
     ConstantFolding optimizer(/*cpu_device=*/nullptr);
     GraphDef output;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+    absl::Status status =
+        optimizer.Optimize(/*cluster=*/nullptr, item, &output);
     TF_EXPECT_OK(status);
 
     EXPECT_EQ(16, output.node_size());
@@ -3435,7 +3451,7 @@ TEST_F(ConstantFoldingTest, PartialFolding_Concat) {
   EXPECT_EQ(1, tensors_expected.size());
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
   // Run the optimizer twice to make sure the rewrite is idempotent.
   item.graph.Swap(&output);
@@ -3508,7 +3524,7 @@ TEST_F(ConstantFoldingTest, PartialFolding_IdentityN) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
   EXPECT_EQ(8, output.node_size());
   for (const auto& node : output.node()) {
@@ -3570,7 +3586,7 @@ TEST_F(ConstantFoldingTest, TrivialPack) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
   EXPECT_EQ(7, output.node_size());
   int found = 0;
@@ -3652,7 +3668,7 @@ TEST_F(ConstantFoldingTest, Enter) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
   // Run the optimizer twice to make sure the rewrite is idempotent.
   item.graph.Swap(&output);
@@ -3707,7 +3723,7 @@ TEST_F(ConstantFoldingTest, TensorArraySize) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
   // Run the optimizer twice to make sure the rewrite is idempotent.
   item.graph.Swap(&output);
@@ -3745,7 +3761,7 @@ TEST_F(ConstantFoldingTest, FoldingPreservesDenormalFlushing) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(1, output.node_size());
@@ -3781,7 +3797,7 @@ TEST_F(ConstantFoldingTest, EvaluatingLargeConstantNoFoldingMergingLoop) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   std::vector<string> fetch = {"result"};
@@ -3847,7 +3863,8 @@ class ConstantFoldingCastConstTest : public GrapplerTest {
   GraphDef ConstantFoldingOptimize(const GrapplerItem& item) {
     ConstantFolding optimizer(/*cpu_device=*/nullptr);
     GraphDef output;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+    absl::Status status =
+        optimizer.Optimize(/*cluster=*/nullptr, item, &output);
     TF_EXPECT_OK(status);
     return output;
   }
@@ -3900,7 +3917,7 @@ TEST_F(ConstantFoldingTest, MaterializeConstantValuedNode) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(output.node_size(), 6);
@@ -3948,7 +3965,7 @@ TEST_F(ConstantFoldingTest, MaterializeConstantValuedNodeDisableCompression) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr, true);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(output.node_size(), 6);
@@ -4004,7 +4021,7 @@ TEST_F(ConstantFoldingTest, MaterializeConstantValuedNodeHugeFill) {
   item.fetch = {"fill_huge"};
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   EXPECT_EQ(output.node_size(), 3);
@@ -4037,7 +4054,7 @@ TEST_F(ConstantFoldingTest, BitcastDenormalFloats) {
 
   ConstantFolding optimizer(/*cpu_device=*/nullptr);
   GraphDef output;
-  Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
   TF_EXPECT_OK(status);
 
   ASSERT_EQ(output.node_size(), 1);
@@ -4288,7 +4305,8 @@ TEST_F(ConstantFoldingTest, QuantizationEmulation) {
                               /*disable_compressed_tensor_optimization=*/false,
                               fold_quantization_emulation);
     GraphDef output;
-    Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &output);
+    absl::Status status =
+        optimizer.Optimize(/*cluster=*/nullptr, item, &output);
     int num_quantization_emulation_ops = 0;
     for (const NodeDef& node : output.node()) {
       if (node.op() == "QuantizeAndDequantizeV2") {
@@ -4301,6 +4319,102 @@ TEST_F(ConstantFoldingTest, QuantizationEmulation) {
     std::vector<Tensor> actual_tensors = EvaluateNodes(output, item.fetch);
     for (int i = 0; i < item.fetch.size(); ++i) {
       test::ExpectTensorEqual<float>(expected_tensors[i], actual_tensors[i]);
+    }
+  }
+}
+
+static void add_full_type(GrapplerItem& item, std::string node_name) {
+  for (int i = 0; i < item.graph.node_size(); ++i) {
+    NodeDef* node = item.graph.mutable_node(i);
+    if (node->name() == node_name) {
+      FullTypeDef t;
+      t.set_type_id(TFT_PRODUCT);
+      t.add_args()->set_type_id(TFT_TENSOR);
+      t.mutable_args(0)->add_args()->set_type_id(TFT_FLOAT);
+      *node->mutable_experimental_type() = t;
+      break;
+    }
+  }
+}
+
+TEST_F(ConstantFoldingTest, RedundantVariableUpdateAddZeroToVar) {
+  // Adding zeros to a variable should be changed to Identity
+  tensorflow::Scope scope = tensorflow::Scope::NewRootScope();
+  Output var = ops::Variable(scope.WithOpName("var"), {2, 2}, DT_FLOAT);
+  Output zeros = ops::Const(scope.WithOpName("zeros_const"), 0.0f, {2, 2});
+  Output b = ops::AssignAdd(scope.WithOpName("assign_add"), var, zeros);
+
+  GrapplerItem item;
+  item.fetch = {"assign_add"};
+  TF_CHECK_OK(scope.ToGraphDef(&item.graph));
+
+  // Add full type information to the node that will be converted to an Identity
+  add_full_type(item, "assign_add");
+
+  ConstantFolding optimizer(/*cpu_device=*/nullptr);
+  GraphDef got;
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  TF_EXPECT_OK(status);
+
+  GraphDef want;
+  AddNode("var", "VariableV2", {}, {}, &want);
+  AddNode("zeros_const", "Const", {}, {}, &want);
+  AddNode("assign_add", "Identity", {"var", "^zeros_const"}, {}, &want);
+
+  CompareGraphs(want, got);
+  TF_EXPECT_OK(status);
+
+  for (int i = 0; i < got.node_size(); ++i) {
+    const NodeDef& node = got.node(i);
+    if (node.name() == "assign_add") {  // now an Identity
+      FullTypeDef t1 = node.experimental_type();
+      EXPECT_EQ(t1.type_id(), TFT_PRODUCT);
+      EXPECT_EQ(t1.args_size(), 1);
+      FullTypeDef t2 = t1.args(0);
+      EXPECT_EQ(t2.type_id(), TFT_TENSOR);
+      EXPECT_EQ(t2.args_size(), 1);
+      FullTypeDef t3 = t1.args(0).args(0);
+      EXPECT_EQ(t3.type_id(), TFT_FLOAT);
+      EXPECT_EQ(t3.args_size(), 0);
+    }
+  }
+}
+
+TEST_F(ConstantFoldingTest, RedundantVariableUpdateAddZerosToHandle) {
+  // Adding zeros to a variable handle should be changed to NoOp
+  tensorflow::Scope scope = tensorflow::Scope::NewRootScope();
+  Output handle =
+      ops::VarHandleOp(scope.WithOpName("handle"), DT_FLOAT, {2, 2});
+  Output zeros = ops::Const(scope.WithOpName("zeros_const"), 0.0f, {2, 2});
+  auto b = ops::AssignAddVariableOp(scope.WithOpName("assign_add_var"), handle,
+                                    zeros);
+
+  GrapplerItem item;
+  item.fetch = {"assign_add_var"};
+  TF_CHECK_OK(scope.ToGraphDef(&item.graph));
+
+  // Add full type information to the node that will be converted to a NoOp
+  add_full_type(item, "assign_add_var");
+
+  ConstantFolding optimizer(/*cpu_device=*/nullptr);
+  GraphDef got;
+  absl::Status status = optimizer.Optimize(/*cluster=*/nullptr, item, &got);
+  TF_EXPECT_OK(status);
+
+  GraphDef want;
+  AddNode("handle", "VarHandleOp", {}, {}, &want);
+  AddNode("zeros_const", "Const", {}, {}, &want);
+  AddNode("assign_add_var", "NoOp", {"^handle", "^zeros_const"}, {}, &want);
+
+  CompareGraphs(want, got);
+  TF_EXPECT_OK(status);
+
+  for (int i = 0; i < got.node_size(); ++i) {
+    const NodeDef& node = got.node(i);
+    if (node.name() == "assign_add_var") {  // now a NoOp
+      FullTypeDef t = node.experimental_type();
+      EXPECT_TRUE((t.type_id() == TFT_UNSET) ||
+                  ((t.type_id() == TFT_PRODUCT) && (t.args_size() == 0)));
     }
   }
 }

@@ -13,16 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <memory>
+#include <utility>
+
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/IR/QuantTypes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributeInterfaces.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/Matchers.h"  // from @llvm-project
+#include "mlir/IR/PatternMatch.h"  // from @llvm-project
+#include "mlir/Pass/Pass.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/lite/quantization/ir/Passes.h"
 #include "tensorflow/compiler/mlir/lite/quantization/ir/QuantOps.h"
 #include "tensorflow/compiler/mlir/lite/quantization/ir/QuantizeUtils.h"
-#include "tensorflow/compiler/mlir/lite/quantization/ir/UniformSupport.h"
 
 using namespace mlir;
 using namespace mlir::quantfork;
@@ -80,7 +86,7 @@ LogicalResult QuantizedConstRewrite::matchAndRewrite(
   }
 
   // Is the constant value a type expressed in a way that we support?
-  if (!value.isa<FloatAttr, DenseElementsAttr, SparseElementsAttr>()) {
+  if (!mlir::isa<FloatAttr, DenseElementsAttr, SparseElementsAttr>(value)) {
     return failure();
   }
 
@@ -96,7 +102,7 @@ LogicalResult QuantizedConstRewrite::matchAndRewrite(
   auto fusedLoc = rewriter.getFusedLoc(
       {qbarrier.getArg().getDefiningOp()->getLoc(), qbarrier.getLoc()});
   auto newConstOp = rewriter.create<arith::ConstantOp>(
-      fusedLoc, newConstValueType, newConstValue);
+      fusedLoc, newConstValueType, cast<TypedAttr>(newConstValue));
   rewriter.replaceOpWithNewOp<StorageCastOp>(qbarrier, qbarrier.getType(),
                                              newConstOp);
   return success();
@@ -107,7 +113,7 @@ void ConvertConstPass::runOnOperation() {
   auto func = getOperation();
   auto *context = &getContext();
   patterns.add<QuantizedConstRewrite>(context);
-  (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
+  (void)applyPatternsGreedily(func, std::move(patterns));
 }
 
 std::unique_ptr<OperationPass<func::FuncOp>>

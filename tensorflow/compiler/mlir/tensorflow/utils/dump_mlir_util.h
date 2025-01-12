@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_MLIR_TENSORFLOW_UTILS_DUMP_MLIR_UTIL_H_
 #define TENSORFLOW_COMPILER_MLIR_TENSORFLOW_UTILS_DUMP_MLIR_UTIL_H_
 
+#include <memory>
 #include <string>
 
 #include "absl/strings/string_view.h"
@@ -40,10 +41,10 @@ inline constexpr absl::string_view kCrashReproducerCrashAnalysis =
 // This will create a file name via prefixing `name` with the value of the
 // TF_DUMP_GRAPH_PREFIX environment variable if `dirname` is empty and
 // suffixing `name` with ".mlir".
-Status CreateFileForDumping(llvm::StringRef name,
-                            std::unique_ptr<llvm::raw_ostream>* os,
-                            std::string* filepath,
-                            llvm::StringRef dirname = "");
+absl::Status CreateFileForDumping(llvm::StringRef name,
+                                  std::unique_ptr<llvm::raw_ostream>* os,
+                                  std::string* filepath,
+                                  llvm::StringRef dirname = "");
 
 // Dumps MLIR operation to a file and returns the file name used.
 //

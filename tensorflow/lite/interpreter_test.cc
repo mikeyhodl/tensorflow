@@ -22,7 +22,6 @@ limitations under the License.
 
 #include <map>
 #include <memory>
-#include <new>
 #include <string>
 #include <thread>  // NOLINT(build/c++11)
 #include <utility>
@@ -30,29 +29,26 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "third_party/eigen3/Eigen/Core"
+#include "Eigen/Core"  // from @eigen_archive
 #include "tensorflow/lite/core/c/builtin_op_data.h"
 #include "tensorflow/lite/core/c/c_api_types.h"
 #include "tensorflow/lite/core/c/common.h"
 #include "tensorflow/lite/core/kernels/builtin_op_kernels.h"
+#include "tensorflow/lite/core/subgraph.h"
 #include "tensorflow/lite/delegates/utils/simple_delegate.h"
 #include "tensorflow/lite/external_cpu_backend_context.h"
+#include "tensorflow/lite/interpreter_options.h"
 #include "tensorflow/lite/interpreter_test_util.h"
-#include "tensorflow/lite/kernels/internal/compatibility.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
-#include "tensorflow/lite/string_type.h"
 #include "tensorflow/lite/string_util.h"
 #include "tensorflow/lite/testing/util.h"
 #include "tensorflow/lite/util.h"
 
-namespace tflite {
+#ifdef __APPLE__
+#include "TargetConditionals.h"
+#endif
 
-namespace ops {
-namespace builtin {
-TfLiteRegistration* Register_PADV2();
-TfLiteRegistration* Register_NEG();
-}  // namespace builtin
-}  // namespace ops
+namespace tflite {
 
 namespace {
 
@@ -65,13 +61,14 @@ TEST(BasicInterpreter, ZeroInterpreter) {
 
   Interpreter interpreter;
 
-#ifndef NDEBUG
+#if (!defined(NDEBUG)) || defined(__ANDROID__) || \
+    (defined(__APPLE__) && (TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE))
   const char* kExpectedLog = "INFO: Initialized TensorFlow Lite runtime";
-#else
-  const char* kExpectedLog = "";
-#endif
   EXPECT_THAT(testing::internal::GetCapturedStderr(),
               testing::HasSubstr(kExpectedLog));
+#else
+  EXPECT_THAT(testing::internal::GetCapturedStderr(), testing::IsEmpty());
+#endif
 
   interpreter.SetInputs({});
   interpreter.SetOutputs({});
@@ -1834,7 +1831,7 @@ class TestCustomAllocation : public InterpreterTest {
   }
 
   // Actual initialized allocation is more than num_bytes, to account for
-  // required_allocation.
+  // required_alignment.
   TfLiteCustomAllocation NewCustomAlloc(size_t num_bytes,
                                         int required_alignment) {
     // Extra memory to ensure alignment.

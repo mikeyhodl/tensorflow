@@ -37,7 +37,7 @@ py_strict_library(
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python/autograph/pyct:errors",
-        "@gast_archive//:gast",
+        "@pypi_gast//:pkg",
     ],
 )
 
@@ -51,7 +51,7 @@ py_strict_library(
 py_strict_library(
     name = "config_lib",
     srcs = ["config_lib.py"],
-    visibility = ["//tensorflow:__subpackages__"],
+    visibility = ["//visibility:private"],
 )
 
 py_strict_library(
@@ -61,9 +61,9 @@ py_strict_library(
     deps = [
         ":ag_ctx",
         ":converter",
-        "//tensorflow/python:framework_ops",
-        "//tensorflow/python/autograph/operators",
+        "//tensorflow/python/autograph/operators:variables",
         "//tensorflow/python/framework:auto_control_deps",
+        "//tensorflow/python/framework:ops",
         "//tensorflow/python/framework:tensor_util",
         "//tensorflow/python/util:nest",
     ],
@@ -91,11 +91,12 @@ py_strict_test(
     deps = [
         ":converter",
         ":test_lib",
-        "//tensorflow/python:client_testlib",
+        #internal proto upb dep
         "//tensorflow/python/autograph/pyct:anno",
         "//tensorflow/python/autograph/pyct:loader",
         "//tensorflow/python/autograph/pyct:parser",
         "//tensorflow/python/autograph/pyct:templates",
+        "//tensorflow/python/platform:client_testlib",
     ],
 )
 
@@ -107,9 +108,10 @@ py_strict_test(
     deps = [
         ":converter",
         ":function_wrappers",
-        "//tensorflow/python:client_testlib",
-        "//tensorflow/python:variables",
+        #internal proto upb dep
         "//tensorflow/python/eager:context",
         "//tensorflow/python/framework:constant_op",
+        "//tensorflow/python/ops:variables",
+        "//tensorflow/python/platform:client_testlib",
     ],
 )

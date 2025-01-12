@@ -18,15 +18,28 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/memory/memory.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
+#include "absl/types/optional.h"
+#include "absl/types/span.h"
+#include "tensorflow/c/eager/c_api.h"
 #include "tensorflow/c/eager/c_api_experimental.h"
+#include "tensorflow/c/eager/immediate_execution_tensor_handle.h"
 #include "tensorflow/c/eager/tfe_cancellation_manager_internal.h"
+#include "tensorflow/c/eager/tfe_op_internal.h"
 #include "tensorflow/c/eager/tfe_tensorhandle_internal.h"
+#include "tensorflow/c/tf_datatype.h"
 #include "tensorflow/c/tf_status.h"
 #include "tensorflow/c/tf_status_internal.h"
-#include "tensorflow/core/lib/gtl/cleanup.h"
+#include "tensorflow/core/framework/cancellation.h"
+#include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/util/device_name_utils.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/thread_annotations.h"
 
 namespace tensorflow {
 namespace parallel_device {
@@ -368,6 +381,27 @@ void ParallelDevice::StartExecute(TFE_Context* context,
   }
 }
 
+void ParallelDevice::StartExecute(
+    TFE_Context* context,
+    const std::vector<std::vector<TFE_TensorHandle*>>& inputs,
+    const char* operation_name, const TFE_OpAttrs* attributes,
+    int expected_max_outputs, CancellationManager& cancellation_manager,
+    absl::optional<int64_t> step_id) const {
+  for (int device_index = 0; device_index < underlying_devices_.size();
+       ++device_index) {
+    DeviceThread* device_thread = device_threads_[device_index].get();
+    std::vector<TFE_TensorHandle*> device_inputs;
+    device_inputs.reserve(inputs.size());
+    for (int input_index = 0; input_index < inputs.size(); ++input_index) {
+      // Parallel tensors are divided between operations by device.
+      device_inputs.push_back(inputs[input_index][device_index]);
+    }
+    device_thread->StartExecute(
+        context, operation_name, std::move(device_inputs), attributes,
+        expected_max_outputs, cancellation_manager, step_id);
+  }
+}
+
 void ParallelDevice::AsyncWait(TFE_Context* context, TF_Status* status) const {
   StatusPtr first_bad_status(nullptr);
 
@@ -547,7 +581,7 @@ std::unique_ptr<ParallelTensor> ParallelTensor::FromTensorHandles(
       new ParallelTensor(parallel_device, std::move(components), dtype));
 }
 
-Status ParallelTensor::Shape(const std::vector<int64_t>** shape) const {
+absl::Status ParallelTensor::Shape(const std::vector<int64_t>** shape) const {
   if (!shape_.has_value()) {
     TF_Status status;
     PartialTensorShape combined_shape;
@@ -583,10 +617,10 @@ Status ParallelTensor::Shape(const std::vector<int64_t>** shape) const {
     shape_ = std::vector<int64_t>(dim_sizes.begin(), dim_sizes.end());
   }
   *shape = &*shape_;
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status ParallelTensor::SummarizeValue(std::string& summary) {
+absl::Status ParallelTensor::SummarizeValue(std::string& summary) {
   summary = "{";
   std::vector<std::string> summarized_devices = device_.SummarizeDeviceNames();
   for (int component_index = 0; component_index < tensors_.size();
@@ -603,7 +637,7 @@ Status ParallelTensor::SummarizeValue(std::string& summary) {
                     "\": ", component_summary);
   }
   summary += "}";
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 }  // namespace parallel_device

@@ -201,7 +201,7 @@ template <>
 struct is_string<std::string> : std::true_type {};
 
 template <>
-struct is_string<::tensorflow::StringPiece> : std::true_type {};
+struct is_string<absl::string_view> : std::true_type {};
 
 template <>
 struct is_string<tstring> : std::true_type {};
@@ -222,9 +222,15 @@ struct NoneSuch {};
 
 // True if the Feature map in a tf.Example supports heterogenous lookup.
 // See https://abseil.io/tips/144.
+// TODO(b/365531379): this cannot be replaced by a lambda because it exposes a
+// Clang bug when used in modules.
+struct CheckFindFunctor {
+  template <class Container>
+  auto operator()(Container&& c) -> decltype(c.find(NoneSuch{})) {}
+};
 inline constexpr bool kFeatureMapHasHeterogeneousLookup =
-    Requires<const decltype(Features::default_instance().feature())>(
-        [](auto&& c) -> decltype(c.find(NoneSuch{})) {});
+    Requires<decltype(Features::default_instance().feature())>(
+        CheckFindFunctor());
 
 // Converts an `absl::string_view` into a string-type compatible for use in the
 // protobuf library (e.g. as lookup keys in `proto2::Map` or as elements addable
@@ -359,6 +365,54 @@ typename internal::RepeatedFieldTrait<FeatureType>::Type* GetFeatureValues(
 template <typename ProtoType>
 const Feature& GetFeature(absl::string_view key, const ProtoType& proto) {
   return GetFeatures(proto).feature().at(internal::ProtoMapKey(key));
+}
+
+// Returns a read-only Feature proto for the specified key, returns nullptr
+// if the key is not found. Supported types for the proto: SequenceExample,
+// Example, Features.
+template <typename ProtoType>
+const Feature* MaybeGetFeature(absl::string_view key, const ProtoType& proto) {
+  const protobuf::Map<std::string, Feature>& feature_map =
+      GetFeatures(proto).feature();
+  auto it = feature_map.find(internal::ProtoMapKey(key));
+
+  if (it == feature_map.end()) {
+    return nullptr;
+  }
+
+  return &it->second;
+}
+
+// Base declaration of a family of template functions to return a read only
+// repeated field of feature values or nullptr.
+template <typename FeatureType>
+const typename internal::RepeatedFieldTrait<FeatureType>::Type*
+MaybeGetFeatureValues(const Feature& feature);
+
+template <>
+const protobuf::RepeatedField<protobuf_int64>*
+MaybeGetFeatureValues<protobuf_int64>(const Feature& feature);
+template <>
+const protobuf::RepeatedField<float>* MaybeGetFeatureValues<float>(
+    const Feature& feature);
+template <>
+const protobuf::RepeatedPtrField<std::string>* MaybeGetFeatureValues<tstring>(
+    const Feature& feature);
+template <>
+const protobuf::RepeatedPtrField<std::string>*
+MaybeGetFeatureValues<std::string>(const Feature& feature);
+
+// Returns a read only repeated field corresponding to a feature with the
+// specified name and FeatureType. Supported ProtoTypes: SequenceExample,
+// Example, Features.
+template <typename FeatureType, typename ProtoType>
+const typename internal::RepeatedFieldTrait<FeatureType>::Type*
+MaybeGetFeatureValues(absl::string_view key, const ProtoType& proto) {
+  const Feature* feature = MaybeGetFeature(key, proto);
+  if (feature == nullptr) {
+    return nullptr;
+  }
+  return &GetFeatureValues<FeatureType>(*feature);
 }
 
 // Returns a mutable Feature proto for the specified key, creates a new if
